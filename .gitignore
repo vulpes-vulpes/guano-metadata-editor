@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Backups
+GUANO_backup_*/
+backup_*/
+
+# Test files
+test_*.wav
+
+# PyInstaller build artifacts
+build/
+dist/
+# Note: guano_editor.spec is needed for builds, so don't ignore *.spec
+*.dmg
+*.tar.gz
+*.zip
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Virtual environment
+guano_venv/
+venv/
+env/
