@@ -37,7 +37,6 @@ test_*.wav
 # PyInstaller build artifacts
 build/
 dist/
-# Note: guano_editor.spec is needed for builds, so don't ignore *.spec
 *.dmg
 *.tar.gz
 *.zip
