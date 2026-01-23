@@ -9,7 +9,7 @@ a = Analysis(
     datas=[
         ('README.md', '.'),
         ('USER_GUIDE.md', '.'),
-        ('QUICK_START.md', '.'),
+        ('CHANGELOG.md', '.'),
     ],
     hiddenimports=[
         'guano',
