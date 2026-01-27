@@ -36,8 +36,13 @@ See [USER_GUIDE.md](USER_GUIDE.md) for detailed instructions.
 ### For Developers (Running from Source)
 
 If you want to contribute or modify the code:
- How to Use
 
+**Clone the repository:**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/guano-metadata-editor.git
+   cd guano-metadata-editor
+
+ ## How to Use
 1. **Launch the Application**: Double-click the app (or run `python guano_gui.py` if using source)
 2. **Select Directory**: Click "Browse" to select a folder containing WAV files with GUANO metadata
 3. **Load Files**: Click "Load Files" to scan and read metadata from all WAV files

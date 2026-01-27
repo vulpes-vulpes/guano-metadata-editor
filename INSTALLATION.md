@@ -13,7 +13,7 @@ No Python installation required!
 
 ### From Source
 
-1. **Clone the repository:**
+**Clone the repository:**
    ```bash
    git clone https://github.com/YOUR_USERNAME/guano-metadata-editor.git
    cd guano-metadata-editor
