@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import logging
 
+# Maximum sane size for a single WAV chunk (256 MB).
+# Protects against memory exhaustion when reading corrupted or crafted files.
+_MAX_CHUNK_BYTES = 256 * 1024 * 1024
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,8 +68,16 @@ def read_wav_chunks(filepath: str) -> List[WAVChunk]:
                 break
             
             chunk_size = struct.unpack('<I', f.read(4))[0]
+
+            if chunk_size > _MAX_CHUNK_BYTES:
+                logger.warning(
+                    f"Chunk {chunk_id!r} size {chunk_size} exceeds limit "
+                    f"({_MAX_CHUNK_BYTES} bytes); stopping read."
+                )
+                break
+
             chunk_data = f.read(chunk_size)
-            
+
             if len(chunk_data) < chunk_size:
                 logger.warning(f"Incomplete chunk {chunk_id}, expected {chunk_size} bytes, got {len(chunk_data)}")
                 break
@@ -179,20 +191,27 @@ def safe_guano_write(filepath: str, guano_file):
         # Update GUANO chunk in original chunks
         updated_chunks = update_guano_chunk(original_chunks, guano_chunk_data)
         
-        # Write to a new temp file first (safer)
+        # Write to a new temp file first, then atomically replace the original.
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=Path(filepath).parent) as tmp2:
             tmp_path2 = tmp2.name
-        
-        write_wav_with_chunks(tmp_path2, updated_chunks)
-        
-        # Atomic replace
-        shutil.move(tmp_path2, filepath)
-        
+
+        try:
+            write_wav_with_chunks(tmp_path2, updated_chunks)
+            shutil.move(tmp_path2, filepath)
+        except Exception:
+            # Clean up the second temp file on failure so it doesn't linger
+            # in the user's recording directory.
+            try:
+                Path(tmp_path2).unlink()
+            except OSError:
+                pass
+            raise
+
         logger.info(f"Successfully updated {filepath} while preserving all chunks")
-        
+
     finally:
-        # Clean up temp file
+        # Clean up the first temp file (used only to extract the GUANO chunk).
         try:
             Path(tmp_path).unlink()
-        except:
+        except OSError:
             pass

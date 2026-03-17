@@ -61,8 +61,8 @@ app = BUNDLE(
     bundle_identifier='org.batacoustics.guano-editor',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1.0.0',
+        'CFBundleShortVersionString': '1.1.0',
+        'CFBundleVersion': '1.1.0',
         'NSHumanReadableCopyright': '2026 Bat Acoustic Research Community',
     },
 )

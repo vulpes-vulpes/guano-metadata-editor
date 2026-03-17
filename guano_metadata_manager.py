@@ -31,6 +31,161 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# GUANO specification constants
+# Reference: https://github.com/riggsd/guano-spec/blob/master/guano_specification.md
+# ---------------------------------------------------------------------------
+
+# All fields defined in the GUANO specification, with type, required flag,
+# and a short description drawn directly from the spec.
+GUANO_STANDARD_FIELDS: Dict[str, Dict] = {
+    "GUANO|Version": {
+        "type": "string",
+        "required": True,
+        "description": "GUANO metadata version in use. Must be '1.0'. "
+                       "Must appear as the very first field in the metadata block.",
+    },
+    "Filter HP": {
+        "type": "float",
+        "required": False,
+        "description": "High-pass filter frequency in kHz.",
+    },
+    "Filter LP": {
+        "type": "float",
+        "required": False,
+        "description": "Low-pass filter frequency in kHz.",
+    },
+    "Firmware Version": {
+        "type": "string",
+        "required": False,
+        "description": "Device firmware version in the manufacturer's own format.",
+    },
+    "Hardware Version": {
+        "type": "string",
+        "required": False,
+        "description": "Device hardware revision or hardware options.",
+    },
+    "Humidity": {
+        "type": "float",
+        "required": False,
+        "description": "Relative humidity as a percentage (0.0–100.0).",
+    },
+    "Length": {
+        "type": "float",
+        "required": False,
+        "description": "Recording length in seconds. "
+                       "For time-expanded files this is the actual (not .WAV) duration.",
+    },
+    "Loc Accuracy": {
+        "type": "float",
+        "required": False,
+        "description": "Location accuracy in metres (Estimated Position Error, 1-sigma).",
+    },
+    "Loc Elevation": {
+        "type": "float",
+        "required": False,
+        "description": "Elevation above mean sea level in metres.",
+    },
+    "Loc Position": {
+        "type": "lat/lon",
+        "required": False,
+        "description": "WGS84 latitude/longitude pair, space-separated e.g. '51.5074 -0.1278'.",
+    },
+    "Make": {
+        "type": "string",
+        "required": False,
+        "description": "Manufacturer of the recording hardware.",
+    },
+    "Model": {
+        "type": "string",
+        "required": False,
+        "description": "Model name or number of the recording hardware.",
+    },
+    "Note": {
+        "type": "multiline string",
+        "required": False,
+        "description": "Freeform text note associated with the recording. "
+                       "Use \\n to encode a literal newline.",
+    },
+    "Original Filename": {
+        "type": "string",
+        "required": False,
+        "description": "Original filename as used by the recording hardware. "
+                       "Editing software should preserve this value when renaming files.",
+    },
+    "Samplerate": {
+        "type": "integer",
+        "required": False,
+        "description": "Recording samplerate in Hz. "
+                       "For time-expanded files this is TE × the .WAV samplerate.",
+    },
+    "Serial": {
+        "type": "string",
+        "required": False,
+        "description": "Serial number or unique identifier of the recording hardware.",
+    },
+    "Species Auto ID": {
+        "type": "list",
+        "required": False,
+        "description": "Auto-classified species/guild, comma-separated. "
+                       "Most dominant species should appear first.",
+    },
+    "Species Manual ID": {
+        "type": "list",
+        "required": False,
+        "description": "Manually identified species/guild, comma-separated. "
+                       "Most dominant species should appear first.",
+    },
+    "Tags": {
+        "type": "list",
+        "required": False,
+        "description": "Comma-separated arbitrary tags or labels.",
+    },
+    "TE": {
+        "type": "integer",
+        "required": False,
+        "description": "Time-expansion factor. Omit or use 1 for direct (non-expanded) recordings.",
+    },
+    "Temperature Ext": {
+        "type": "float",
+        "required": False,
+        "description": "External (ambient) temperature in degrees Celsius.",
+    },
+    "Temperature Int": {
+        "type": "float",
+        "required": False,
+        "description": "Internal device temperature in degrees Celsius.",
+    },
+    "Timestamp": {
+        "type": "datetime",
+        "required": True,
+        "description": "Recording start time in ISO 8601 format, "
+                       "e.g. '2015-12-31T23:59:59+04:00'. "
+                       "Include UTC offset wherever possible.",
+    },
+}
+
+# Registered GUANO namespaces.  Manufacturer/software authors should use their
+# own reserved namespace for any custom fields.  End users should use 'User'.
+GUANO_RESERVED_NAMESPACES: Dict[str, str] = {
+    "GUANO":  "GUANO meta-metadata (do not use for custom fields)",
+    "User":   "User-defined personal fields",
+    "Anabat": "Titley Scientific",
+    "BAT":    "Binary Acoustic Technologies",
+    "BATREC": "Bat Recorder by Bill Kraus",
+    "MSFT":   "Myotisoft",
+    "NABat":  "North American Bat Monitoring Program",
+    "OAD":    "Open Acoustic Devices",
+    "PET":    "Pettersson",
+    "SB":     "SonoBat",
+    "WA":     "Wildlife Acoustics",
+}
+
+# Fields that should not be silently overwritten; the user should be
+# explicitly warned before any change is made.
+GUANO_PROTECTED_FIELDS: set = {"GUANO|Version"}
+
+
 class GuanoMetadataManager:
     """
     Manager class for reading and editing GUANO metadata in WAV files.
@@ -76,8 +231,25 @@ class GuanoMetadataManager:
         
         logger.info(f"Found {len(wav_files)} WAV files in {directory}")
         
+        # Resolve the directory once for symlink containment checks below.
+        resolved_dir = directory_path.resolve()
+
         # Load metadata from each file
         for wav_file in wav_files:
+            # Guard against symlinks that point outside the selected directory.
+            # Without this, a crafted symlink could cause reads (or later writes)
+            # to affect files the user never intended to touch.
+            try:
+                if not wav_file.resolve().is_relative_to(resolved_dir):
+                    logger.warning(
+                        f"Skipping {wav_file.name}: resolves outside selected "
+                        f"directory (possible symlink attack)"
+                    )
+                    errors.append(f"Skipped (outside directory): {wav_file.name}")
+                    continue
+            except OSError:
+                errors.append(f"Could not resolve path: {wav_file.name}")
+                continue
             try:
                 g = guano.GuanoFile(str(wav_file))
                 
