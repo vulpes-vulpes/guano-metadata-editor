@@ -8,7 +8,7 @@ in WAV files containing bat vocalizations.
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 import sys
 
 from guano_metadata_manager import (
@@ -109,11 +109,14 @@ class GuanoGUI:
         ttk.Button(button_frame, text="Edit Common Fields", 
                   command=self.edit_common_fields).grid(row=0, column=1, padx=5)
         
+        ttk.Button(button_frame, text="Edit Variable Fields", 
+                  command=self.edit_variable_fields).grid(row=0, column=2, padx=5)
+        
         ttk.Button(button_frame, text="Refresh View",
-                  command=self.refresh_display).grid(row=0, column=2, padx=5)
+                  command=self.refresh_display).grid(row=0, column=3, padx=5)
 
         ttk.Button(button_frame, text="Add Field",
-                  command=self.add_new_field).grid(row=0, column=3, padx=5)
+                  command=self.add_new_field).grid(row=0, column=4, padx=5)
         
         # === Log/Status Area ===
         log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding="5")
@@ -183,7 +186,7 @@ class GuanoGUI:
         
         # Info label
         info_label = ttk.Label(frame, 
-            text="These fields have different values across files. They are shown for reference only.",
+            text="These fields have different values across files. Use 'Edit Variable Fields' to standardize them.",
             wraplength=700, justify=tk.LEFT)
         info_label.grid(row=1, column=0, columnspan=2, pady=5, sticky=tk.W)
         
@@ -325,6 +328,22 @@ class GuanoGUI:
             return
 
         EditDialog(self.root, self, common_fields)
+
+    def edit_variable_fields(self):
+        """Open dialog to edit variable metadata fields (convert to common)."""
+        if self.manager.get_file_count() == 0:
+            messagebox.showwarning("No Files", "Please load files first.")
+            return
+
+        variable_fields = self.manager.get_variable_fields()
+
+        if not variable_fields:
+            messagebox.showinfo("No Variable Fields",
+                "No variable fields found. All fields are already common across files.")
+            return
+
+        # Open edit dialog
+        EditVariableFieldsDialog(self.root, self, variable_fields)
 
     def add_new_field(self):
         """Open dialog to add a new metadata field to all loaded files."""
@@ -878,6 +897,169 @@ class AddFieldDialog:
 
         self.dialog.destroy()
         self.main_app.apply_field_updates({field_name: value})
+
+
+class EditVariableFieldsDialog:
+    """Dialog window for editing variable metadata fields (standardizing them)."""
+    
+    def __init__(self, parent, main_app, variable_fields: Dict[str, List[Tuple[str, Any]]]):
+        self.main_app = main_app
+        self.variable_fields = variable_fields
+        self.entries = {}
+        
+        # Create dialog window
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Edit Variable Fields - Standardize Values")
+        self.dialog.geometry("700x550")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        self._create_widgets()
+    
+    def _create_widgets(self):
+        """Create dialog widgets."""
+        main_frame = ttk.Frame(self.dialog, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        self.dialog.columnconfigure(0, weight=1)
+        self.dialog.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(2, weight=1)
+        
+        # Warning label
+        warning_frame = ttk.Frame(main_frame, relief=tk.RIDGE, borderwidth=2, padding="10")
+        warning_frame.grid(row=0, column=0, pady=(0, 10), sticky=(tk.W, tk.E))
+        warning_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(warning_frame, text="⚠️", font=('Helvetica', 16)).grid(
+            row=0, column=0, padx=(0, 10), sticky=tk.N)
+        
+        ttk.Label(warning_frame,
+            text="Variable fields have different values across files. "
+                 "Entering a new value will OVERWRITE the existing values in ALL files, "
+                 "converting the field to a common field.",
+            wraplength=600, justify=tk.LEFT, foreground='#CC6600').grid(
+            row=0, column=1, sticky=tk.W)
+        
+        # Instructions
+        ttk.Label(main_frame, 
+            text="Enter a new value to standardize each field. Leave blank to skip that field.",
+            style='Header.TLabel', wraplength=650).grid(row=1, column=0, pady=(0, 10), sticky=tk.W)
+        
+        # Create scrollable frame for fields
+        canvas = tk.Canvas(main_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=2, column=1, sticky=(tk.N, tk.S))
+        
+        # Add entry fields for each variable field
+        scrollable_frame.columnconfigure(1, weight=1)
+        
+        for i, (field, values) in enumerate(sorted(self.variable_fields.items())):
+            # Field label with current value info
+            field_frame = ttk.LabelFrame(scrollable_frame, text=field, padding="5")
+            field_frame.grid(row=i, column=0, columnspan=2, sticky=(tk.W, tk.E), 
+                           padx=5, pady=5)
+            field_frame.columnconfigure(0, weight=1)
+            
+            # Show existing values
+            values_text = "Current values across files:\n"
+            # Show up to 5 examples
+            for filename, value in values[:5]:
+                display_value = format_value(value)
+                if len(display_value) > 60:
+                    display_value = display_value[:57] + "..."
+                values_text += f"  • {filename}: {display_value}\n"
+            
+            if len(values) > 5:
+                values_text += f"  ... and {len(values) - 5} more file(s)"
+            
+            ttk.Label(field_frame, text=values_text, 
+                     font=('Courier', 9), foreground='#666').grid(
+                row=0, column=0, sticky=tk.W, pady=(0, 5))
+            
+            # New value entry
+            entry_frame = ttk.Frame(field_frame)
+            entry_frame.grid(row=1, column=0, sticky=(tk.W, tk.E))
+            entry_frame.columnconfigure(1, weight=1)
+            
+            ttk.Label(entry_frame, text="New value:", 
+                     font=('Helvetica', 9, 'bold')).grid(
+                row=0, column=0, sticky=tk.W, padx=(0, 5))
+            
+            entry = ttk.Entry(entry_frame, width=50)
+            entry.grid(row=0, column=1, sticky=(tk.W, tk.E))
+            
+            self.entries[field] = entry
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        
+        ttk.Button(button_frame, text="Apply Changes", 
+                  command=self.apply_changes).grid(row=0, column=0, padx=5)
+        
+        ttk.Button(button_frame, text="Cancel", 
+                  command=self.dialog.destroy).grid(row=0, column=1, padx=5)
+    
+    def apply_changes(self):
+        """Collect changes and apply them."""
+        updates = {}
+        
+        for field, entry in self.entries.items():
+            new_value = entry.get().strip()
+            
+            # Only include fields where user entered a value
+            if new_value:
+                updates[field] = new_value
+        
+        if not updates:
+            messagebox.showinfo("No Changes", 
+                "No fields were modified. Enter values to standardize fields.",
+                parent=self.dialog)
+            return
+        
+        # Final confirmation
+        file_count = self.main_app.manager.get_file_count()
+        update_list = "\n".join(f"  • {field}: {value}" for field, value in updates.items())
+        
+        confirm_msg = (
+            f"⚠️ This will OVERWRITE existing values in {file_count} files:\n\n"
+            f"{update_list}\n\n"
+            f"This action will standardize these variable fields. Continue?"
+        )
+        
+        if not messagebox.askyesno("Confirm Overwrite", confirm_msg, 
+                                   icon='warning', parent=self.dialog):
+            return
+        
+        # Warn before modifying any protected fields
+        protected_changes = [f for f in updates if f in GUANO_PROTECTED_FIELDS]
+        if protected_changes:
+            names = ", ".join(protected_changes)
+            if not messagebox.askyesno(
+                "Protected Field",
+                f"You are modifying a required GUANO meta-field: {names}\n\n"
+                "Changing it incorrectly may break compatibility with other "
+                "GUANO software. Proceed anyway?",
+                icon="warning",
+                parent=self.dialog,
+            ):
+                return
+        
+        # Close dialog and apply
+        self.dialog.destroy()
+        self.main_app.apply_field_updates(updates)
 
 
 def main():
