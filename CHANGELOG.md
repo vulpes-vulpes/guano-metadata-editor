@@ -2,6 +2,40 @@
 
 All notable changes to the GUANO Metadata Editor will be documented in this file.
 
+## [1.1.0] - 2026-03-16
+
+### Added
+- **Add New Fields Feature**
+  - New "Add Field" button in the main GUI to add metadata fields to all loaded files
+  - Two-mode field selection dialog:
+    - **Standard GUANO Fields**: Browse and select from all 23 spec-defined fields with full descriptions and type information
+    - **Custom Fields**: Define custom namespaced fields (e.g., `User|Survey Site`, `ACME|GainSetting`)
+  - Live preview of field names (e.g., `User|FieldName`) as you type
+  - Embedded descriptions from the GUANO specification for each standard field
+  - Automatic detection of existing fields with user-facing warnings
+  - Support for both standard and custom field additions
+
+### Security & Robustness Improvements
+- **Field Name Validation**: Reject field names with `:` or newline characters that would corrupt GUANO format
+- **Memory Protection**: Cap WAV chunk sizes at 256 MB to prevent memory exhaustion from crafted files
+- **Protected Field Safeguards**: 
+  - Added warning before modifying `GUANO|Version` in the edit dialog
+  - Require explicit confirmation before any protected field changes
+- **Symlink Traversal Protection**: Directory scan now rejects symlinks pointing outside the selected directory
+- **Temp File Cleanup**: Fixed resource leak where temp files could be orphaned if write operations fail
+- **Exception Handling**: Replaced bare `except:` with specific `except OSError` for more reliable error handling
+
+### Infrastructure
+- Added GUANO specification constants to `guano_metadata_manager.py`:
+  - `GUANO_STANDARD_FIELDS`: All 23 spec-defined fields with types and descriptions
+  - `GUANO_RESERVED_NAMESPACES`: All 11 registered vendor/manufacturer namespaces
+  - `GUANO_PROTECTED_FIELDS`: Meta-fields requiring extra confirmation before modification
+- Updated `example_usage.py` with new field addition examples
+
+### Documentation
+- Enhanced inline documentation explaining field validation and namespace requirements
+- Added guidance on using the `User` namespace for personal custom fields to maximize data sharing compatibility
+
 ## [1.0.0] - 2026-01-23
 
 ### Initial Release
