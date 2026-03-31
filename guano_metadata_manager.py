@@ -284,8 +284,16 @@ class GuanoMetadataManager:
             return 0, errors
         
         # Find all WAV files (case-insensitive)
-        wav_files = list(directory_path.glob('**/*.wav')) + \
-                    list(directory_path.glob('**/*.WAV'))
+        all_wav_files = list(directory_path.glob('**/*.wav')) + \
+                        list(directory_path.glob('**/*.WAV'))
+        
+        # Filter out macOS metadata files (._*) and other hidden files
+        wav_files = [f for f in all_wav_files if not f.name.startswith('._') and not f.name.startswith('.')]
+        
+        # Check for and log filtered files
+        filtered_count = len(all_wav_files) - len(wav_files)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} macOS metadata/hidden files")
         
         if not wav_files:
             errors.append(f"No WAV files found in directory: {directory}")
@@ -723,6 +731,49 @@ class GuanoMetadataManager:
             return False, "Directory is not readable"
         
         return True, "Directory is valid"
+    
+    def clean_macos_metadata_files(self, directory: str) -> Tuple[int, List[str]]:
+        """
+        Remove macOS metadata files (._* files) from a directory.
+        These are AppleDouble format files that can interfere with file processing.
+        
+        Args:
+            directory: Path to directory to clean
+            
+        Returns:
+            Tuple of (number of files deleted, list of error messages)
+        """
+        deleted_count = 0
+        errors = []
+        
+        directory_path = Path(directory)
+        
+        if not directory_path.exists() or not directory_path.is_dir():
+            return 0, ["Invalid directory"]
+        
+        logger.info(f"Scanning for macOS metadata files in {directory}")
+        
+        # Find all ._ files
+        metadata_files = list(directory_path.glob('**/._*'))
+        
+        if not metadata_files:
+            logger.info("No macOS metadata files found")
+            return 0, []
+        
+        logger.info(f"Found {len(metadata_files)} macOS metadata files")
+        
+        for file_path in metadata_files:
+            try:
+                file_path.unlink()  # Delete the file
+                deleted_count += 1
+                logger.debug(f"Deleted: {file_path.name}")
+            except Exception as e:
+                error_msg = f"Failed to delete {file_path.name}: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+        
+        logger.info(f"Deleted {deleted_count} macOS metadata files")
+        return deleted_count, errors
 
 
 def format_value(value: Any) -> str:
