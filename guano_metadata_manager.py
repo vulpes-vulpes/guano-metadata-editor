@@ -9,7 +9,7 @@ import os
 import shutil
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Callable
 from collections import defaultdict
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -255,7 +255,8 @@ class GuanoMetadataManager:
             logger.error(f"Error loading {wav_file.name}: {str(e)}")
             return False, None, None, f"Error loading {wav_file.name}: {str(e)}"
         
-    def load_directory(self, directory: str, parallel: bool = True, max_workers: Optional[int] = None) -> Tuple[int, List[str]]:
+    def load_directory(self, directory: str, parallel: bool = True, max_workers: Optional[int] = None, 
+                      progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[int, List[str]]:
         """
         Load all WAV files from a directory.
         
@@ -263,6 +264,7 @@ class GuanoMetadataManager:
             directory: Path to directory containing WAV files
             parallel: Whether to use parallel processing (default: True)
             max_workers: Maximum number of worker threads (default: CPU count * 2)
+            progress_callback: Optional callback(current, total) for progress updates
             
         Returns:
             Tuple of (number of files loaded, list of error messages)
@@ -305,6 +307,7 @@ class GuanoMetadataManager:
         
         # Temporary storage for metadata during analysis
         temp_metadata = {}
+        processed_count = 0
 
         if parallel and len(wav_files) > 1:
             logger.info(f"Loading files with {max_workers} worker threads")
@@ -325,20 +328,33 @@ class GuanoMetadataManager:
                             temp_metadata[str(filepath)] = metadata_dict
                         elif error_msg:
                             errors.append(error_msg)
+                        
+                        # Report progress
+                        processed_count += 1
+                        if progress_callback:
+                            progress_callback(processed_count, len(wav_files))
+                            
                     except Exception as e:
                         wav_file = future_to_file[future]
                         error_msg = f"Unexpected error loading {wav_file.name}: {str(e)}"
                         logger.error(error_msg)
                         errors.append(error_msg)
+                        processed_count += 1
+                        if progress_callback:
+                            progress_callback(processed_count, len(wav_files))
         else:
             # Sequential processing for single file or when parallel is disabled
-            for wav_file in wav_files:
+            for idx, wav_file in enumerate(wav_files, 1):
                 success, filepath, metadata_dict, error_msg = self._load_single_file_metadata(wav_file, resolved_dir)
                 if success:
                     self.files.append(filepath)
                     temp_metadata[str(filepath)] = metadata_dict
                 elif error_msg:
                     errors.append(error_msg)
+                
+                # Report progress
+                if progress_callback:
+                    progress_callback(idx, len(wav_files))
         
         if self.files:
             logger.info(f"Analyzing fields from {len(self.files)} loaded files...")
@@ -525,7 +541,8 @@ class GuanoMetadataManager:
             logger.error(error_msg)
             return False, error_msg
     
-    def update_common_fields(self, field_updates: Dict[str, Any], parallel: bool = True, max_workers: Optional[int] = None) -> Tuple[int, List[str]]:
+    def update_common_fields(self, field_updates: Dict[str, Any], parallel: bool = True, max_workers: Optional[int] = None,
+                            progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[int, List[str]]:
         """
         Update common metadata fields across all loaded files.
         
@@ -533,6 +550,7 @@ class GuanoMetadataManager:
             field_updates: Dictionary of field names and new values
             parallel: Whether to use parallel processing (default: True)
             max_workers: Maximum number of worker threads (default: CPU count)
+            progress_callback: Optional callback(current, total) for progress updates
         
         Returns:
             Tuple of (number of files updated, list of error messages)
@@ -562,6 +580,7 @@ class GuanoMetadataManager:
             
             # Process in batches to limit memory usage from pending futures
             batch_size = max(100, len(self.files) // 10)  # Process ~10% at a time, min 100
+            total_processed = 0
             
             for i in range(0, len(self.files), batch_size):
                 batch = self.files[i:i + batch_size]
@@ -583,18 +602,31 @@ class GuanoMetadataManager:
                                 updated_count += 1
                             else:
                                 errors.append(error_msg)
+                            
+                            # Report progress
+                            total_processed += 1
+                            if progress_callback:
+                                progress_callback(total_processed, len(self.files))
+                                
                         except Exception as e:
                             error_msg = f"Unexpected error updating {Path(filepath).name}: {str(e)}"
                             logger.error(error_msg)
                             errors.append(error_msg)
+                            total_processed += 1
+                            if progress_callback:
+                                progress_callback(total_processed, len(self.files))
         else:
             # Sequential processing (for single file or when parallel is disabled)
-            for filepath in self.files:
+            for idx, filepath in enumerate(self.files, 1):
                 success, error_msg = self._update_single_file(filepath, field_updates)
                 if success:
                     updated_count += 1
                 else:
                     errors.append(error_msg)
+                
+                # Report progress
+                if progress_callback:
+                    progress_callback(idx, len(self.files))
         
         # Refresh analysis after updates by re-scanning (memory efficient)
         if updated_count > 0:

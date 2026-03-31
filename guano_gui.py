@@ -10,6 +10,7 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 import sys
+import threading
 
 from guano_metadata_manager import (
     GuanoMetadataManager, format_value,
@@ -118,14 +119,61 @@ class GuanoGUI:
         ttk.Button(button_frame, text="Add Field",
                   command=self.add_new_field).grid(row=0, column=4, padx=5)
         
+        # === Progress Bar Section (initially hidden) ===
+        self.progress_frame = ttk.Frame(main_frame, padding="5")
+        self.progress_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
+        self.progress_frame.columnconfigure(0, weight=1)
+        
+        # Progress label
+        self.progress_label = ttk.Label(self.progress_frame, text="", font=('Helvetica', 9))
+        self.progress_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 2))
+        
+        # Progress bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(
+            self.progress_frame,
+            variable=self.progress_var,
+            maximum=100,
+            mode='determinate'
+        )
+        self.progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 2))
+        
+        # Progress status (count)
+        self.progress_status = ttk.Label(self.progress_frame, text="", font=('Courier', 9))
+        self.progress_status.grid(row=2, column=0, sticky=tk.W)
+        
+        # Hide progress bar initially
+        self.progress_frame.grid_remove()
+        
         # === Log/Status Area ===
         log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding="5")
-        log_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        log_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD)
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    
+    def _show_progress(self, message: str):
+        """Show the integrated progress bar."""
+        self.progress_label.config(text=message)
+        self.progress_var.set(0)
+        self.progress_status.config(text="0 / 0")
+        self.progress_frame.grid()
+        self.root.update_idletasks()
+    
+    def _update_progress(self, current: int, total: int):
+        """Update the integrated progress bar."""
+        if total > 0:
+            percent = (current / total) * 100
+            self.progress_var.set(percent)
+            self.progress_status.config(text=f"{current:,} / {total:,}")
+            # Don't call update() here - we're already in the event loop
+    
+    def _hide_progress(self):
+        """Hide the integrated progress bar."""
+        self.progress_frame.grid_remove()
+        self.root.update_idletasks()
     
     def _create_common_fields_tab(self, parent):
         """Create the common fields display tab."""
@@ -219,12 +267,47 @@ class GuanoGUI:
             return
         
         self.log_message(f"Loading files from: {directory}")
-        self.root.config(cursor="watch")
-        self.root.update()
         
+        # Show progress bar
+        self._show_progress("Scanning and loading WAV files...")
+        
+        # Variables to store results
+        result = {'count': 0, 'errors': [], 'exception': None}
+        
+        def load_thread():
+            """Thread function for loading files."""
+            try:
+                def progress_callback(current, total):
+                    # Update progress from worker thread
+                    # Use default arguments to capture values, not references
+                    self.root.after_idle(lambda c=current, t=total: self._update_progress(c, t))
+                
+                # Load files with progress callback
+                count, errors = self.manager.load_directory(directory, progress_callback=progress_callback)
+                result['count'] = count
+                result['errors'] = errors
+            except Exception as e:
+                result['exception'] = e
+        
+        # Start loading in a thread
+        thread = threading.Thread(target=load_thread, daemon=True)
+        thread.start()
+        
+        # Wait for thread to complete
+        while thread.is_alive():
+            self.root.update()
+            thread.join(timeout=0.1)
+        
+        # Hide progress bar
+        self._hide_progress()
+        
+        # Handle results
         try:
-            # Load files
-            count, errors = self.manager.load_directory(directory)
+            if result['exception']:
+                raise result['exception']
+            
+            count = result['count']
+            errors = result['errors']
             
             if count == 0:
                 messagebox.showerror("No Files Loaded", 
@@ -247,8 +330,6 @@ class GuanoGUI:
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred while loading files:\n{str(e)}")
             self.log_message(f"Error: {str(e)}")
-        finally:
-            self.root.config(cursor="")
     
     def refresh_display(self):
         """Refresh the metadata display."""
@@ -374,11 +455,47 @@ class GuanoGUI:
             return
         
         self.log_message(f"Applying {len(updates)} field updates to {file_count} files...")
-        self.root.config(cursor="watch")
-        self.root.update()
         
+        # Show progress bar
+        self._show_progress("Applying changes to files...")
+        
+        # Variables to store results
+        result = {'updated_count': 0, 'errors': [], 'exception': None}
+        
+        def update_thread():
+            """Thread function for updating files."""
+            try:
+                def progress_callback(current, total):
+                    # Update progress from worker thread
+                    # Use default arguments to capture values, not references
+                    self.root.after_idle(lambda c=current, t=total: self._update_progress(c, t))
+                
+                # Update files with progress callback
+                updated_count, errors = self.manager.update_common_fields(updates, progress_callback=progress_callback)
+                result['updated_count'] = updated_count
+                result['errors'] = errors
+            except Exception as e:
+                result['exception'] = e
+        
+        # Start updating in a thread
+        thread = threading.Thread(target=update_thread, daemon=True)
+        thread.start()
+        
+        # Wait for thread to complete
+        while thread.is_alive():
+            self.root.update()
+            thread.join(timeout=0.1)
+        
+        # Hide progress bar
+        self._hide_progress()
+        
+        # Handle results
         try:
-            updated_count, errors = self.manager.update_common_fields(updates)
+            if result['exception']:
+                raise result['exception']
+            
+            updated_count = result['updated_count']
+            errors = result['errors']
             
             if updated_count > 0:
                 messagebox.showinfo("Update Complete", 
@@ -400,8 +517,6 @@ class GuanoGUI:
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
             self.log_message(f"Error: {str(e)}")
-        finally:
-            self.root.config(cursor="")
     
     def log_message(self, message: str):
         """Add a message to the activity log."""
