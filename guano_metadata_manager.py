@@ -12,6 +12,8 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Any, Optional
 from collections import defaultdict
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
 
 try:
     import guano
@@ -189,20 +191,78 @@ GUANO_PROTECTED_FIELDS: set = {"GUANO|Version"}
 class GuanoMetadataManager:
     """
     Manager class for reading and editing GUANO metadata in WAV files.
+    
+    Memory-optimized: Only caches field analysis, not full GuanoFile objects.
     """
     
     def __init__(self):
         self.files: List[Path] = []
-        self.metadata: Dict[str, guano.GuanoFile] = {}
+        # Don't cache GuanoFile objects - they use too much memory
+        # self.metadata will only be populated during analysis, then cleared
+        self._metadata_cache: Dict[str, guano.GuanoFile] = {}
         self.common_fields: Dict[str, Any] = {}
         self.variable_fields: Dict[str, List[Tuple[str, Any]]] = {}
         
-    def load_directory(self, directory: str) -> Tuple[int, List[str]]:
+        # Memory management settings
+        self.max_memory_cached_files = 1000  # Only cache metadata for analysis if < 1000 files
+    
+    def _load_single_file_metadata(self, wav_file: Path, resolved_dir: Path) -> Tuple[bool, Optional[Path], Optional[Dict], Optional[str]]:
+        """
+        Load only the metadata fields from a single WAV file (not the full GuanoFile object).
+        Helper method for parallel processing - memory optimized.
+        
+        Args:
+            wav_file: Path to the WAV file
+            resolved_dir: Resolved directory path for symlink checking
+            
+        Returns:
+            Tuple of (success, filepath, metadata_dict, error_message)
+        """
+        # Guard against symlinks that point outside the selected directory
+        try:
+            if not wav_file.resolve().is_relative_to(resolved_dir):
+                logger.warning(
+                    f"Skipping {wav_file.name}: resolves outside selected "
+                    f"directory (possible symlink attack)"
+                )
+                return False, None, None, f"Skipped (outside directory): {wav_file.name}"
+        except OSError:
+            return False, None, None, f"Could not resolve path: {wav_file.name}"
+        
+        try:
+            g = guano.GuanoFile(str(wav_file))
+            
+            # Check if file has GUANO metadata
+            if not g:
+                logger.warning(f"No GUANO metadata found in: {wav_file.name}")
+                return False, None, None, f"No GUANO metadata: {wav_file.name}"
+            
+            # Extract just the metadata dictionary, not the whole GuanoFile object
+            # This saves significant memory
+            metadata_dict = {}
+            if hasattr(g, '_md') and g._md:
+                # Make a lightweight copy of the metadata structure
+                for key, value in g._md.items():
+                    if isinstance(value, dict):
+                        metadata_dict[key] = dict(value)
+                    else:
+                        metadata_dict[key] = value
+            
+            logger.debug(f"Loaded metadata from: {wav_file.name}")
+            return True, wav_file, metadata_dict, None
+            
+        except Exception as e:
+            logger.error(f"Error loading {wav_file.name}: {str(e)}")
+            return False, None, None, f"Error loading {wav_file.name}: {str(e)}"
+        
+    def load_directory(self, directory: str, parallel: bool = True, max_workers: Optional[int] = None) -> Tuple[int, List[str]]:
         """
         Load all WAV files from a directory.
         
         Args:
             directory: Path to directory containing WAV files
+            parallel: Whether to use parallel processing (default: True)
+            max_workers: Maximum number of worker threads (default: CPU count * 2)
             
         Returns:
             Tuple of (number of files loaded, list of error messages)
@@ -231,76 +291,95 @@ class GuanoMetadataManager:
         
         logger.info(f"Found {len(wav_files)} WAV files in {directory}")
         
-        # Resolve the directory once for symlink containment checks below.
+        # Resolve the directory once for symlink containment checks
         resolved_dir = directory_path.resolve()
+        
+        # Memory-conscious worker count: limit to 4-6 workers for large file counts
+        if max_workers is None:
+            if len(wav_files) > 5000:
+                max_workers = 4  # Very conservative for huge datasets
+            elif len(wav_files) > 1000:
+                max_workers = 6  # Conservative for large datasets
+            else:
+                max_workers = min(len(wav_files), multiprocessing.cpu_count() * 2)
+        
+        # Temporary storage for metadata during analysis
+        temp_metadata = {}
 
-        # Load metadata from each file
-        for wav_file in wav_files:
-            # Guard against symlinks that point outside the selected directory.
-            # Without this, a crafted symlink could cause reads (or later writes)
-            # to affect files the user never intended to touch.
-            try:
-                if not wav_file.resolve().is_relative_to(resolved_dir):
-                    logger.warning(
-                        f"Skipping {wav_file.name}: resolves outside selected "
-                        f"directory (possible symlink attack)"
-                    )
-                    errors.append(f"Skipped (outside directory): {wav_file.name}")
-                    continue
-            except OSError:
-                errors.append(f"Could not resolve path: {wav_file.name}")
-                continue
-            try:
-                g = guano.GuanoFile(str(wav_file))
+        if parallel and len(wav_files) > 1:
+            logger.info(f"Loading files with {max_workers} worker threads")
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all file load tasks
+                future_to_file = {
+                    executor.submit(self._load_single_file_metadata, wav_file, resolved_dir): wav_file
+                    for wav_file in wav_files
+                }
                 
-                # Check if file has GUANO metadata
-                if not g:
-                    logger.warning(f"No GUANO metadata found in: {wav_file.name}")
-                    errors.append(f"No GUANO metadata: {wav_file.name}")
-                    continue
-                
-                self.files.append(wav_file)
-                self.metadata[str(wav_file)] = g
-                logger.info(f"Loaded metadata from: {wav_file.name}")
-                
-            except Exception as e:
-                logger.error(f"Error loading {wav_file.name}: {str(e)}")
-                errors.append(f"Error loading {wav_file.name}: {str(e)}")
+                # Collect results as they complete
+                for future in as_completed(future_to_file):
+                    try:
+                        success, filepath, metadata_dict, error_msg = future.result()
+                        if success:
+                            self.files.append(filepath)
+                            temp_metadata[str(filepath)] = metadata_dict
+                        elif error_msg:
+                            errors.append(error_msg)
+                    except Exception as e:
+                        wav_file = future_to_file[future]
+                        error_msg = f"Unexpected error loading {wav_file.name}: {str(e)}"
+                        logger.error(error_msg)
+                        errors.append(error_msg)
+        else:
+            # Sequential processing for single file or when parallel is disabled
+            for wav_file in wav_files:
+                success, filepath, metadata_dict, error_msg = self._load_single_file_metadata(wav_file, resolved_dir)
+                if success:
+                    self.files.append(filepath)
+                    temp_metadata[str(filepath)] = metadata_dict
+                elif error_msg:
+                    errors.append(error_msg)
         
         if self.files:
-            self._analyze_fields()
+            logger.info(f"Analyzing fields from {len(self.files)} loaded files...")
+            self._analyze_fields(temp_metadata)
+            # Clear temporary metadata after analysis to free memory
+            temp_metadata.clear()
+            logger.info(f"Field analysis complete, metadata cache cleared to save memory")
         
         return len(self.files), errors
     
-    def _analyze_fields(self):
+    def _analyze_fields(self, metadata_dicts: Dict[str, Dict]):
         """
         Analyze metadata fields to determine which are common (identical across
         all files) and which are variable (differ between files).
+        
+        Args:
+            metadata_dicts: Dictionary mapping filepath to metadata dictionary
         """
-        if not self.metadata:
+        if not metadata_dicts:
             return
         
         # Collect all fields and their values across all files
         field_values: Dict[str, List[Any]] = defaultdict(list)
         
-        for filepath, g in self.metadata.items():
+        for filepath, md in metadata_dicts.items():
             filename = Path(filepath).name
             
-            # GuanoFile stores metadata in _md with nested namespaces
-            if hasattr(g, '_md') and g._md:
-                for key, value in g._md.items():
-                    if isinstance(value, dict):
-                        # Namespaced fields (e.g., GUANO|Version, Filter|HPF)
-                        for subkey, subvalue in value.items():
-                            # Handle empty namespace
-                            if key:
-                                full_key = f"{key}|{subkey}"
-                            else:
-                                full_key = subkey
-                            field_values[full_key].append((filename, subvalue))
-                    else:
-                        # Non-namespaced field - use key as-is
-                        field_values[key].append((filename, value))
+            # Process metadata dictionary
+            for key, value in md.items():
+                if isinstance(value, dict):
+                    # Namespaced fields (e.g., GUANO|Version, Filter|HPF)
+                    for subkey, subvalue in value.items():
+                        # Handle empty namespace
+                        if key:
+                            full_key = f"{key}|{subkey}"
+                        else:
+                            full_key = subkey
+                        field_values[full_key].append((filename, subvalue))
+                else:
+                    # Non-namespaced field - use key as-is
+                    field_values[key].append((filename, value))
         
         # Categorize fields as common or variable
         self.common_fields = {}
@@ -402,12 +481,58 @@ class GuanoMetadataManager:
             # Return as string for other fields
             return value
     
-    def update_common_fields(self, field_updates: Dict[str, Any]) -> Tuple[int, List[str]]:
+    def _update_single_file(self, filepath: Path, field_updates: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """
+        Update a single file with the given field updates.
+        Helper method for parallel processing - memory optimized (doesn't return GuanoFile).
+        
+        Args:
+            filepath: Path to the file to update
+            field_updates: Dictionary of field names and new values
+            
+        Returns:
+            Tuple of (success, error_message)
+        """
+        try:
+            # Load, update, write, and discard - don't keep in memory
+            g = guano.GuanoFile(str(filepath))
+            
+            # Update fields using proper GuanoFile API
+            for field, value in field_updates.items():
+                try:
+                    if value is None or value == "":
+                        # Delete field if value is empty
+                        if field in g:
+                            del g[field]
+                            logger.debug(f"Deleted field '{field}' from {Path(filepath).name}")
+                    else:
+                        # Coerce value to proper type before setting
+                        coerced_value = self._coerce_field_value(field, value)
+                        g[field] = coerced_value
+                        logger.debug(f"Set '{field}' = '{coerced_value}' in {Path(filepath).name}")
+                except Exception as e:
+                    logger.warning(f"Could not update field '{field}' in {Path(filepath).name}: {e}")
+            
+            # Write using safe method that preserves all chunks (including LIST)
+            safe_guano_write(str(filepath), g)
+            logger.info(f"Updated: {Path(filepath).name}")
+            
+            # Don't return the GuanoFile object - let it be garbage collected
+            return True, None
+            
+        except Exception as e:
+            error_msg = f"Error updating {Path(filepath).name}: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
+    
+    def update_common_fields(self, field_updates: Dict[str, Any], parallel: bool = True, max_workers: Optional[int] = None) -> Tuple[int, List[str]]:
         """
         Update common metadata fields across all loaded files.
         
         Args:
             field_updates: Dictionary of field names and new values
+            parallel: Whether to use parallel processing (default: True)
+            max_workers: Maximum number of worker threads (default: CPU count)
         
         Returns:
             Tuple of (number of files updated, list of error messages)
@@ -421,59 +546,97 @@ class GuanoMetadataManager:
         updated_count = 0
         errors = []
         
-        logger.info(f"Updating {len(field_updates)} fields in {len(self.files)} files")
+        logger.info(f"Updating {len(field_updates)} fields in {len(self.files)} files (parallel={parallel})")
         
-        for filepath in self.files:
-            try:
-                # Re-open the file to ensure we have fresh data
-                g = guano.GuanoFile(str(filepath))
-                
-                # Update fields using proper GuanoFile API
-                for field, value in field_updates.items():
-                    try:
-                        if value is None or value == "":
-                            # Delete field if value is empty
-                            if field in g:
-                                del g[field]
-                                logger.debug(f"Deleted field '{field}' from {Path(filepath).name}")
-                        else:
-                            # Coerce value to proper type before setting
-                            coerced_value = self._coerce_field_value(field, value)
-                            g[field] = coerced_value
-                            logger.debug(f"Set '{field}' = '{coerced_value}' in {Path(filepath).name}")
-                    except Exception as e:
-                        logger.warning(f"Could not update field '{field}' in {Path(filepath).name}: {e}")
-                
-                # Write using safe method that preserves all chunks (including LIST)
-                safe_guano_write(str(filepath), g)
-                
-                # Update our cached metadata
-                self.metadata[str(filepath)] = g
-                updated_count += 1
-                logger.info(f"Updated: {Path(filepath).name}")
-                
-            except Exception as e:
-                error_msg = f"Error updating {Path(filepath).name}: {str(e)}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-                
-            except Exception as e:
-                error_msg = f"Error updating {Path(filepath).name}: {str(e)}"
-                logger.error(error_msg)
-                errors.append(error_msg)
+        # Memory-conscious worker count for updates
+        if max_workers is None:
+            if len(self.files) > 5000:
+                max_workers = 4  # Very conservative for huge datasets
+            elif len(self.files) > 1000:
+                max_workers = 6  # Conservative for large datasets
+            else:
+                max_workers = min(len(self.files), multiprocessing.cpu_count() * 2)
         
-        # Refresh analysis after updates
-        if updated_count > 0:
-            # Reload metadata
-            for filepath in self.files:
-                try:
-                    self.metadata[str(filepath)] = guano.GuanoFile(str(filepath))
-                except Exception as e:
-                    logger.warning(f"Error reloading {filepath}: {e}")
+        if parallel and len(self.files) > 1:
+            logger.info(f"Using {max_workers} worker threads")
             
-            self._analyze_fields()
+            # Process in batches to limit memory usage from pending futures
+            batch_size = max(100, len(self.files) // 10)  # Process ~10% at a time, min 100
+            
+            for i in range(0, len(self.files), batch_size):
+                batch = self.files[i:i + batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1}/{(len(self.files) + batch_size - 1)//batch_size} ({len(batch)} files)")
+                
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit batch of file update tasks
+                    future_to_filepath = {
+                        executor.submit(self._update_single_file, filepath, field_updates): filepath
+                        for filepath in batch
+                    }
+                    
+                    # Collect results as they complete
+                    for future in as_completed(future_to_filepath):
+                        filepath = future_to_filepath[future]
+                        try:
+                            success, error_msg = future.result()
+                            if success:
+                                updated_count += 1
+                            else:
+                                errors.append(error_msg)
+                        except Exception as e:
+                            error_msg = f"Unexpected error updating {Path(filepath).name}: {str(e)}"
+                            logger.error(error_msg)
+                            errors.append(error_msg)
+        else:
+            # Sequential processing (for single file or when parallel is disabled)
+            for filepath in self.files:
+                success, error_msg = self._update_single_file(filepath, field_updates)
+                if success:
+                    updated_count += 1
+                else:
+                    errors.append(error_msg)
+        
+        # Refresh analysis after updates by re-scanning (memory efficient)
+        if updated_count > 0:
+            logger.info(f"Successfully updated {updated_count} files, refreshing analysis...")
+            self._refresh_analysis()
         
         return updated_count, errors
+    
+    def _refresh_analysis(self):
+        """
+        Re-analyze fields after updates without keeping full GuanoFile objects in memory.
+        Memory-optimized version that loads metadata temporarily.
+        """
+        temp_metadata = {}
+        
+        logger.info(f"Re-scanning {len(self.files)} files for updated field analysis...")
+        
+        # Load metadata from each file (lightweight)
+        for filepath in self.files:
+            try:
+                g = guano.GuanoFile(str(filepath))
+                
+                # Extract just the metadata dictionary
+                metadata_dict = {}
+                if hasattr(g, '_md') and g._md:
+                    for key, value in g._md.items():
+                        if isinstance(value, dict):
+                            metadata_dict[key] = dict(value)
+                        else:
+                            metadata_dict[key] = value
+                
+                temp_metadata[str(filepath)] = metadata_dict
+                
+            except Exception as e:
+                logger.warning(f"Error reloading {filepath}: {e}")
+        
+        # Analyze fields
+        self._analyze_fields(temp_metadata)
+        
+        # Clear temporary storage
+        temp_metadata.clear()
+        logger.info("Field analysis refreshed")
     
     def get_field_info(self, field_name: str) -> Dict[str, Any]:
         """
