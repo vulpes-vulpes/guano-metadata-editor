@@ -199,6 +199,37 @@ class GuanoMetadataManager:
             logger.error(error_msg)
             return False, error_msg
     
+    def _coerce_field_value(self, field: str, value: str) -> Any:
+        """
+        Convert string values to the proper type expected by GuanoFile.
+        
+        Args:
+            field: Field name (e.g., 'Loc Position', 'Samplerate')
+            value: String value from user input
+            
+        Returns:
+            Properly typed value for the field
+        """
+        # Handle fields that require special coercion
+        if field == 'Loc Position':
+            # Expects tuple of floats: (latitude, longitude)
+            parts = value.split()
+            if len(parts) != 2:
+                raise ValueError(f"Loc Position must be two space-separated numbers (lat lon), got: {value}")
+            return tuple(float(v) for v in parts)
+        elif field in ('Filter HP', 'Length', 'Loc Accuracy', 'Loc Elevation'):
+            return float(value)
+        elif field in ('Samplerate',):
+            return int(value)
+        elif field == 'TE':
+            return int(value) if value else 1
+        elif field == 'Note':
+            # Preserve newline handling
+            return value.replace('\\n', '\n')
+        else:
+            # Return as string for other fields
+            return value
+    
     def update_common_fields(self, field_updates: Dict[str, Any]) -> Tuple[int, List[str]]:
         """
         Update common metadata fields across all loaded files.
@@ -234,9 +265,10 @@ class GuanoMetadataManager:
                                 del g[field]
                                 logger.debug(f"Deleted field '{field}' from {Path(filepath).name}")
                         else:
-                            # Set field using proper API
-                            g[field] = value
-                            logger.debug(f"Set '{field}' = '{value}' in {Path(filepath).name}")
+                            # Coerce value to proper type before setting
+                            coerced_value = self._coerce_field_value(field, value)
+                            g[field] = coerced_value
+                            logger.debug(f"Set '{field}' = '{coerced_value}' in {Path(filepath).name}")
                     except Exception as e:
                         logger.warning(f"Could not update field '{field}' in {Path(filepath).name}: {e}")
                 
