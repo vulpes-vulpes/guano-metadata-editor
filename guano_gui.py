@@ -705,6 +705,7 @@ class EditDialog:
         self.main_app = main_app
         self.fields = fields
         self.entries = {}
+        self.delete_vars = {}  # Track delete checkbox states
         
         # Create dialog window
         self.dialog = tk.Toplevel(parent)
@@ -727,8 +728,8 @@ class EditDialog:
         
         # Instructions
         ttk.Label(main_frame, 
-            text="Edit the values below. Empty fields will be deleted from all files.",
-            style='Header.TLabel', wraplength=550).grid(row=0, column=0, pady=10, sticky=tk.W)
+            text="Edit values or check 'Delete' to remove fields from all files.",
+            style='Header.TLabel', wraplength=550).grid(row=0, column=0, columnspan=3, pady=10, sticky=tk.W)
         
         # Create scrollable frame for fields
         canvas = tk.Canvas(main_frame, highlightthickness=0)
@@ -743,22 +744,30 @@ class EditDialog:
         canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
         canvas.configure(yscrollcommand=scrollbar.set)
         
-        canvas.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        canvas.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=1, column=3, sticky=(tk.N, tk.S))
         
-        # Add entry fields
+        # Add entry fields with delete checkboxes
         scrollable_frame.columnconfigure(1, weight=1)
         
         for i, (field, value) in enumerate(sorted(self.fields.items())):
             # Field label
             ttk.Label(scrollable_frame, text=f"{field}:", 
                      font=('Helvetica', 9, 'bold')).grid(
-                row=i*2, column=0, sticky=tk.W, padx=5, pady=(5,0))
+                row=i*3, column=0, sticky=tk.W, padx=5, pady=(5,0))
+            
+            # Delete checkbox
+            delete_var = tk.BooleanVar(value=False)
+            self.delete_vars[field] = delete_var
+            delete_cb = ttk.Checkbutton(scrollable_frame, text="Delete", 
+                                       variable=delete_var,
+                                       command=lambda f=field: self._on_delete_toggle(f))
+            delete_cb.grid(row=i*3, column=1, sticky=tk.W, padx=5, pady=(5,0))
             
             # Value entry
             entry = ttk.Entry(scrollable_frame, width=50)
             entry.insert(0, format_value(value))
-            entry.grid(row=i*2+1, column=0, columnspan=2, sticky=(tk.W, tk.E), 
+            entry.grid(row=i*3+1, column=0, columnspan=2, sticky=(tk.W, tk.E), 
                       padx=5, pady=(0,5))
             
             self.entries[field] = entry
@@ -773,15 +782,33 @@ class EditDialog:
         ttk.Button(button_frame, text="Cancel", 
                   command=self.dialog.destroy).grid(row=0, column=1, padx=5)
     
+    def _on_delete_toggle(self, field):
+        """Handle delete checkbox toggle - disable entry when delete is checked."""
+        entry = self.entries[field]
+        if self.delete_vars[field].get():
+            entry.config(state='disabled')
+        else:
+            entry.config(state='normal')
+    
     def apply_changes(self):
-        """Gather all entry values and add them to the pending changes queue."""
+        """Gather all entry values and delete flags, then add to pending changes queue."""
         updates = {}
         
+        # Check for fields marked for deletion
+        for field, delete_var in self.delete_vars.items():
+            if delete_var.get():
+                updates[field] = None  # None means delete
+                continue
+        
+        # Collect edited values (only for non-deleted fields)
         for field, entry in self.entries.items():
+            if field in updates:  # Skip if already marked for deletion
+                continue
+                
             new_value = entry.get().strip()
             old_value = format_value(self.fields[field])
             
-            # Only include changed fields
+            # Only include fields that actually changed
             if new_value != old_value:
                 updates[field] = new_value if new_value else None
         
@@ -1206,6 +1233,7 @@ class EditVariableFieldsDialog:
         self.main_app = main_app
         self.variable_fields = variable_fields
         self.entries = {}
+        self.delete_vars = {}  # Track delete checkbox states
         
         # Create dialog window
         self.dialog = tk.Toplevel(parent)
@@ -1243,7 +1271,7 @@ class EditVariableFieldsDialog:
         
         # Instructions
         ttk.Label(main_frame, 
-            text="Enter a new value to standardize each field. Leave blank to skip that field.",
+            text="Enter a new value to standardize, or check 'Delete' to remove the field from all files.",
             style='Header.TLabel', wraplength=650).grid(row=1, column=0, pady=(0, 10), sticky=tk.W)
         
         # Create scrollable frame for fields
@@ -1288,7 +1316,7 @@ class EditVariableFieldsDialog:
                      font=('Courier', 9), foreground='#666').grid(
                 row=0, column=0, sticky=tk.W, pady=(0, 5))
             
-            # New value entry
+            # New value entry with delete option
             entry_frame = ttk.Frame(field_frame)
             entry_frame.grid(row=1, column=0, sticky=(tk.W, tk.E))
             entry_frame.columnconfigure(1, weight=1)
@@ -1299,6 +1327,14 @@ class EditVariableFieldsDialog:
             
             entry = ttk.Entry(entry_frame, width=50)
             entry.grid(row=0, column=1, sticky=(tk.W, tk.E))
+            
+            # Delete checkbox
+            delete_var = tk.BooleanVar(value=False)
+            self.delete_vars[field] = delete_var
+            delete_cb = ttk.Checkbutton(entry_frame, text="Delete field", 
+                                       variable=delete_var,
+                                       command=lambda f=field: self._on_delete_toggle(f))
+            delete_cb.grid(row=0, column=2, sticky=tk.W, padx=(10, 0))
             
             self.entries[field] = entry
         
@@ -1312,11 +1348,29 @@ class EditVariableFieldsDialog:
         ttk.Button(button_frame, text="Cancel", 
                   command=self.dialog.destroy).grid(row=0, column=1, padx=5)
     
+    def _on_delete_toggle(self, field):
+        """Handle delete checkbox toggle - disable entry when delete is checked."""
+        entry = self.entries[field]
+        if self.delete_vars[field].get():
+            entry.config(state='disabled')
+        else:
+            entry.config(state='normal')
+    
     def apply_changes(self):
-        """Collect changes and add them to the pending changes queue."""
+        """Collect changes and delete flags, then add to pending changes queue."""
         updates = {}
         
+        # Check for fields marked for deletion
+        for field, delete_var in self.delete_vars.items():
+            if delete_var.get():
+                updates[field] = None  # None means delete
+                continue
+        
+        # Collect new values (only for non-deleted fields)
         for field, entry in self.entries.items():
+            if field in updates:  # Skip if already marked for deletion
+                continue
+                
             new_value = entry.get().strip()
             
             # Only include fields where user entered a value
