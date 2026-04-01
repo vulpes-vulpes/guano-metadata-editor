@@ -16,17 +16,15 @@ This utility aims to help. It lets you quickly read the GUANO from a set of file
 
 ## Features
 
-- **Read existing GUANO metadata** from directories of WAV files with GUANO metadata
-- **Add new GUANO metadata fields** - choose from standard GUANO fields or create custom namespaced fields
-- **Smart summarization** - differentiates between:
-  - Fields identical across all files (e.g., site name, equipment)
-  - Fields that differ per file (e.g., timestamp, filename)
-- **Safe editing** of common GUANO metadata fields across multiple files
-- **Automatic backups** before any modifications
-- **WAV chunk preservation** - maintains all other metadata chunks (LIST, INFO, etc.)
-- **Clear warnings** and multi-step confirmations before changes
-- **User-friendly GUI** - no command-line experience needed
-- **Cross-platform** - works on macOS, Windows, and Linux
+- **Read GUANO metadata from WAV files:** Quickly read GUANO from all files in a directory (including subdirectories)
+- **Differentiate "common" and "variable" fields:** Categorize GUANO fields as having a common value across all loaded files, or variable values across files
+- **Edit common fields:** Edit or delete fields shared across all files
+- **Edit/standardize variable fields:** Replace varying field values with a single common value across all files
+- **Add new fields:** Add both standard GUANO fields and custom fields in a safe way compatible with the GUANO specification
+- **Pending changes queue:** Queue multiple edits and apply them all in a single pass!
+- **Monitor progress:** Integrated progress bar and file count tracking for all operations
+- **Efficient for large datasets:** Parallel processing for speed and optimized memory usage for datasets with 10,000+ files
+- **Cross-platform:** Works on macOS, Windows, and Linux
 
 ## Quick Start
 
@@ -57,25 +55,43 @@ If you want to contribute or modify the code:
    ```
 
 ## How to Use
+
+### Basic Workflow
 1. **Launch the Application**: Double-click the app (or run `python guano_gui.py` if using source)
 2. **Select Directory**: Click "Browse" to select a folder containing WAV files with GUANO metadata
 3. **Load Files**: Click "Load Files" to scan and read metadata from all WAV files
-4. **View Summary**: 
-   - **Common tab**: Fields identical across all files (e.g., site name, equipment)
-   - **Variable tab**: Fields that differ per file (e.g., timestamp, filename) with file-by-file details
-5. **Add New Fields** (NEW in 1.1.0):
-   - Click "Add Field" to add a new metadata field to all loaded files
-   - Choose from **Standard GUANO Fields** (23 spec-defined fields) or define a **Custom Field**
-   - Helpful descriptions from the GUANO specification guide field selection
-   - Automatic warnings if the field already exists
-6. **Edit Common Fields**: 
-   - Click "Edit Common Fields" to modify fields shared across all files
-   - Make your changes in the dialog
-   - Review the confirmation showing which files will be affected
-7. **Create Backup**: Always recommended - creates timestamped copies before editing
-8. **Apply Changes**: Confirm to write the updated metadata (all WAV chunks are preserved)
+   - Progress bar shows loading status
+4. **View Metadata Summary**: 
+   - **Common Fields tab**: Fields identical across all files (e.g., site name, equipment model)
+   - **Variable Fields tab**: Fields that differ per file (e.g., timestamp, temperature) with expandable file-by-file details
 
-See [QUICK_START.md](QUICK_START.md) for a visual guide or [USER_GUIDE.md](USER_GUIDE.md) for comprehensive documentation.
+### Editing Workflow (NEW in 1.2.0)
+The editor uses a **pending changes queue** system that allows you to batch multiple edits and apply them all at once:
+
+5. **Queue Your Changes**:
+   - **Edit Common Fields**: Modify fields shared across all files → adds to queue
+   - **Edit Variable Fields**: Standardize varying fields to a single value → adds to queue
+   - **Add Field**: Add new metadata fields (standard GUANO or custom) → adds to queue
+   
+6. **Review Pending Changes**: 
+   - All queued changes appear in the "Pending Changes" panel at the bottom
+   - Changes are labeled: `[C]` (common), `[V→C]` (variable→common), `[NEW]` (new field)
+   - Remove or clear changes if needed
+
+7. **Apply All Changes**: 
+   - Click the **▶ Apply All Changes** button (becomes active when changes are queued)
+   - Review the confirmation dialog
+   - All changes are applied in a **single pass** through all files
+   - Progress bar shows update status
+
+
+### Important Notes
+- ⚠️ **Always maintain your own backups** before batch editing operations
+- The tool modifies metadata within WAV files but preserves all audio and other data chunks
+- Changes cannot be undone after applying - review pending changes carefully
+- For safety, consider working on a copy of your data first
+
+See [USER_GUIDE.md](USER_GUIDE.md) for comprehensive documentation with screenshots.
 
 ## Technical Details
 

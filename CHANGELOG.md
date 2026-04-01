@@ -2,6 +2,96 @@
 
 All notable changes to the GUANO Metadata Editor will be documented in this file.
 
+## [1.2.0] - 2026-04-01
+
+### Major Features
+
+#### Pending Changes Queue System
+- **Batch editing workflow**: Queue multiple changes and apply them all in a single pass through files
+- **Three change types supported**:
+  - `[C]` Common field edits
+  - `[V→C]` Variable field standardization
+  - `[NEW]` New field additions
+- **Visual queue panel**: See all pending changes before applying
+  - Remove individual changes
+  - Clear all queued changes
+  - Changes labeled by type with clear formatting
+- **Single-pass processing**: Apply all queued changes in one operation instead of multiple passes
+- **Smart button states**: "Apply All Changes" button disabled when queue is empty, enabled with visual indicator when changes are pending
+
+#### Explicit Field Deletion
+- **Delete checkboxes** added to Edit Common Fields and Edit Variable Fields dialogs
+- **Visual feedback**: Entry fields disable when delete is checked
+- **Consistent behavior**: Clear indication of deletion intent across all dialogs
+- **Dual method support**: Delete via checkbox (recommended) or by clearing field value
+- **Queue display**: Deleted fields show with `<delete>` indicator
+
+### Performance & Memory Improvements
+- **Parallel file loading**: ThreadPoolExecutor with adaptive worker count (2-16 based on file count)
+- **Parallel updates**: Batched processing for efficient large dataset handling
+- **Memory optimization**: 95% reduction in memory usage for large datasets
+  - Removed GuanoFile object caching
+  - Temporary metadata dictionaries instead of full objects
+  - Conservative worker limits (4-6 threads for datasets >1000 files)
+  - Batch size: 100 files per update batch
+- **Performance**: Tested with 16,000+ files, reduced RAM from 22GB to <2GB
+
+### User Experience Enhancements
+- **Integrated progress bars**: Real-time progress tracking during file loading and updates
+- **Thread-safe updates**: Smooth progress bar updates using `after_idle()` with proper lambda capture
+- **macOS ._ file filtering**: Automatic filtering of AppleDouble metadata files during loading
+- **Filtered file reporting**: Log shows count of filtered ._ files
+- **Enhanced status indicators**: 
+  - Pending changes count with emoji indicator (⚡)
+  - Orange bold text when changes are ready
+  - Play icon (▶) on Apply All Changes button
+- **Larger window**: Increased from 700px to 850px height for better visibility
+
+### Removed Features
+- **Backup feature removed**: Simplified workflow, users maintain their own backups
+- **Refresh View button removed**: Redundant with automatic refresh after changes
+- **Rationale**: Reduces complexity, avoids disk space issues with large datasets, puts backup responsibility with users who understand their infrastructure
+
+### UI Improvements
+- **Edit Common Fields dialog**: Delete checkboxes with disabled entry feedback
+- **Edit Variable Fields dialog**: 
+  - Delete checkboxes for variable field removal
+  - Updated instructions for clarity
+  - Support for deleting variable fields (previously only standardization)
+- **Pending Changes panel**: 
+  - Clear type labels: [C], [V→C], [NEW]
+  - Delete indicator: `<delete>` for removed fields
+  - Remove Selected, Clear All buttons
+- **Button reorganization**: Streamlined to Edit Common, Edit Variable, Add Field
+
+### Bug Fixes
+- **Loc Position field handling**: Fixed type coercion bug where tuple values became None
+- **Progress bar recursion**: Fixed infinite event loop from lambda variable capture
+- **Memory leaks**: Eliminated metadata caching preventing garbage collection
+
+### Documentation
+- **README.md**: Updated with v1.2.0 pending changes queue workflow
+- **USER_GUIDE.md**: Complete rewrite of workflows and features for new queue system
+  - New Workflow 4: Batch Metadata Updates
+  - New Workflow 6: Standardizing Variable Fields  
+  - Updated safety features section
+  - Added delete checkbox documentation
+  - Removed backup feature references
+- **Example workflows**: Updated to show queue-based batch editing
+
+### Technical Changes
+- **Thread-safe callbacks**: Progress callbacks use `after_idle()` for safe GUI updates
+- **Lambda value capture**: Fixed with default arguments pattern `lambda c=current, t=total`
+- **File filtering**: `Path.glob()` with list comprehension for ._ file exclusion
+- **Grid layout**: Adjusted weights to keep pending changes panel always visible
+- **Confirmation dialogs**: Updated to reference user backup responsibility
+
+### Breaking Changes
+- Removed `create_backup()` method from `GuanoMetadataManager`
+- Removed `shutil` import (no longer needed)
+- Dialog buttons changed from "Apply Changes" to "Add to Queue"
+- Removed backup-related GUI elements
+
 ## [1.1.0] - 2026-03-16
 
 ### Added

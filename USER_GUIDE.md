@@ -18,7 +18,10 @@ The GUANO Metadata Editor is a specialized tool for bat acoustic researchers wor
 - Quickly scan and summarize metadata across multiple files
 - Identify which metadata fields are consistent across recordings
 - Edit metadata fields that are shared across all files
-- Create backups before making any changes
+- Standardize variable fields to common values across your dataset
+- Add new metadata fields (standard GUANO or custom)
+- Queue multiple changes and apply them all in a single pass
+- Monitor progress with integrated progress tracking
 
 ## Installation
 
@@ -79,16 +82,18 @@ See INSTALLATION.md for more developer details.
 The main window will appear with several sections:
 - Directory selection at the top
 - Tabbed metadata display in the middle
-- Action buttons
+- Action buttons (Edit Common Fields, Edit Variable Fields, Add Field)
+- Pending Changes queue panel
 - Activity log at the bottom
 
 ### Your First Session
 
 1. **Select a directory**: Click "Browse..." and navigate to a folder containing WAV files with GUANO metadata
-2. **Load files**: Click "Load Files" to scan the directory
+2. **Load files**: Click "Load Files" to scan the directory (progress bar shows loading status)
 3. **Review metadata**: Check the "Common Fields" and "Variable Fields" tabs
-4. **Create backup** (recommended): Click "Create Backup" before making any changes
-5. **Edit if needed**: Click "Edit Common Fields" to modify shared metadata
+4. **Queue changes**: Use "Edit Common Fields", "Edit Variable Fields", or "Add Field" to queue your changes
+5. **Review pending changes**: Check the "Pending Changes" panel at the bottom
+6. **Apply all changes**: Click "▶ Apply All Changes" to update all files in one pass
 
 ## Understanding the Interface
 
@@ -128,16 +133,34 @@ The variable fields are shown in a tree structure:
 
 ### Action Buttons
 
-- **Create Backup**: Creates timestamped copies of all loaded files
-- **Edit Common Fields**: Opens a dialog to modify shared metadata
-- **Refresh View**: Reloads the display (useful after external changes)
+- **Edit Common Fields**: Opens a dialog to modify fields shared across all files
+  - Change field values in text boxes
+  - Check "Delete" checkbox to remove fields from all files
+  - Changes are queued, not immediately applied
+- **Edit Variable Fields**: Opens a dialog to standardize fields that vary across files
+  - Enter new values to standardize across all files
+  - Check "Delete field" checkbox to remove variable fields from all files
+  - Converts them to common fields or deletes them
+- **Add Field**: Opens a dialog to add new metadata fields (standard GUANO or custom) to all files
+
+### Pending Changes Panel
+
+Shows all queued changes before applying them:
+- **[C]** - Common field edit (or delete)
+- **[V→C]** - Variable field standardization (variable → common, or delete)
+- **[NEW]** - New field addition
+- Fields marked for deletion show with `<delete>` as the value
+- **Remove Selected**: Remove a specific queued change
+- **Clear All**: Clear all pending changes
+- **▶ Apply All Changes**: Apply all pending changes in a single pass (button is disabled when queue is empty)
 
 ### Activity Log
 
 Shows a running log of all operations:
-- Files loaded
-- Backups created
+- Files loaded (including count of filtered ._ files)
+- Changes queued
 - Updates applied
+- Progress status
 - Errors or warnings
 
 ## Common Workflows
@@ -146,9 +169,9 @@ Shows a running log of all operations:
 
 **Goal**: Check what metadata exists in your recordings
 
-1. Load files from directory
+1. Load files from directory (with progress tracking)
 2. Review "Common Fields" tab to see shared metadata
-3. Review "Variable Fields" tab to see what varies
+3. Review "Variable Fields" tab to see what varies (expand to see file-by-file values)
 4. Note any missing or incorrect fields
 
 ### Workflow 2: Adding Site Information
@@ -156,80 +179,104 @@ Shows a running log of all operations:
 **Goal**: Add location details to all recordings from a session
 
 1. Load files
-2. Create backup (recommended!)
-3. Click "Edit Common Fields"
-4. Add or modify fields like:
+2. Click "Edit Common Fields"
+3. Add or modify fields like:
    - `Site Name`: "Forest Preserve Site A"
    - `Loc Position`: "42.123456 -71.234567"
    - `Loc Elevation`: "245"
-5. Review changes in confirmation dialog
-6. Click "Apply Changes"
+4. Click "Add to Queue" - changes appear in Pending Changes panel
+5. Review queued changes at the bottom of the window
+6. Click "▶ Apply All Changes" to update all files
+7. Confirm the operation in the dialog
 
 ### Workflow 3: Correcting Species Identification
 
 **Goal**: Update species identification across multiple files
 
 1. Load files from session
-2. Create backup
-3. Click "Edit Common Fields"
-4. Update `Species Manual ID` field
-5. Optionally add a `Note` explaining the correction
-6. Apply changes
+2. Click "Edit Common Fields"
+3. Update `Species Manual ID` field
+4. Optionally add a `Note` explaining the correction
+5. Click "Add to Queue"
+6. Review in Pending Changes panel
+7. Click "▶ Apply All Changes"
 
-### Workflow 4: Batch Metadata Updates
+### Workflow 4: Batch Metadata Updates (NEW - Most Efficient!)
 
-**Goal**: Update multiple fields at once for consistency
+**Goal**: Update multiple types of changes in a single pass through files
 
 1. Load files
-2. Create backup
-3. Edit Common Fields and update:
-   - Recording equipment details
-   - Site information
-   - Processing notes
-   - Species identification
-4. Apply all changes together
+2. Click "Edit Common Fields" and queue changes to existing fields
+3. Click "Edit Variable Fields" to standardize varying fields
+4. Click "Add Field" to add new metadata fields
+5. Review ALL queued changes in the Pending Changes panel:
+   - Common field edits show as [C]
+   - Variable standardizations show as [V→C]
+   - New fields show as [NEW]
+6. Click "▶ Apply All Changes" once to apply everything
+7. All changes are applied in a **single pass** - much faster than processing files multiple times!
 
 ### Workflow 5: Removing Incorrect Metadata
 
 **Goal**: Delete a field that was incorrectly set
 
 1. Load files
-2. Create backup
-3. Click "Edit Common Fields"
-4. **Clear the value** of the field you want to remove (make it blank)
-5. Apply changes
-6. The field will be deleted from all files
+2. Click "Edit Common Fields" (or "Edit Variable Fields" for variable fields)
+3. Find the field you want to remove
+4. **Check the "Delete" checkbox** next to that field (the entry will be disabled)
+5. Click "Add to Queue"
+6. Review in Pending Changes panel - deleted fields show with `<delete>` as the value
+7. Click "▶ Apply All Changes"
+8. The field will be deleted from all files
+
+**Note**: You can also delete a field by clearing its value completely (leaving it blank), but using the Delete checkbox makes your intent explicit.
+
+### Workflow 6: Standardizing Variable Fields
+
+**Goal**: Convert fields that vary across files to a single common value
+
+1. Load files
+2. Review "Variable Fields" tab to see which fields differ
+3. Click "Edit Variable Fields"
+4. For each field you want to standardize:
+   - **To set a common value**: Enter the new value in the field
+   - **To delete the field**: Check the "Delete field" checkbox
+5. Click "Add to Queue"
+6. The changes show as [V→C] in Pending Changes
+7. Click "▶ Apply All Changes" to standardize or delete across all files
+
+**Example use cases**:
+- Standardize inconsistent site names to a single value
+- Remove fields that were incorrectly set with different values
+- Update equipment information that varied due to a bug
 
 ## Safety Features
 
-### 1. Multi-Step Confirmation
+### 1. Pending Changes Queue
 
-Before any files are modified, you'll see:
-- A list of changes to be made
-- Number of files affected
-- A warning icon
-- Recommendation to create backup
+All changes are queued before being applied:
+- Review all pending changes before applying
+- See exactly what will change with clear labels ([C], [V→C], [NEW])
+- Remove or modify queued changes before applying
+- Apply button is disabled until you queue changes
+- All changes applied in a single, atomic operation
 
-You must confirm twice:
-- Once in the edit dialog
-- Once in the final confirmation
+### 2. Multi-Step Confirmation
 
-### 2. Backup Creation
+Before any files are modified:
+- Protected fields (like GUANO|Version) require extra confirmation
+- Final "Apply All Changes" dialog shows:
+  - Complete list of all pending changes
+  - Number of files affected
+  - Warning about file modification
+  - Strong recommendation to maintain your own backups
 
-The "Create Backup" button:
-- Creates a new folder named `GUANO_backup_YYYYMMDD_HHMMSS`
-- Copies all loaded files to this folder
-- Preserves original file timestamps and attributes
-- Can be done multiple times (each with unique timestamp)
+### 3. Variable Fields Protection
 
-**Important**: Backups are created in the same parent directory as your files.
-
-### 3. Read-Only Variable Fields
-
-Fields that differ between files are:
-- Displayed for reference only
-- Cannot be bulk edited
-- Prevents accidental inconsistency
+Variable fields are handled safely:
+- Can only be standardized through "Edit Variable Fields" dialog
+- Clear warning that this will overwrite different values
+- Prevents accidental data loss from bulk editing
 
 ### 4. Validation and Error Handling
 
@@ -240,15 +287,32 @@ The application checks:
 - Write permissions before modifications
 - File integrity after updates
 
-### 5. Activity Logging
+### 5. Progress Tracking
+
+Integrated progress reporting:
+- Progress bar during file loading
+- Progress bar during updates
+- File count tracking
+- Real-time operation status
+- Estimated time for large datasets
+
+### 6. Activity Logging
 
 All operations are logged:
-- Files loaded
+- Files loaded (including filtered ._ files on macOS)
 - Errors encountered
-- Changes applied
-- Backup locations
+- Changes queued and applied
+- Operation completion status
 
 The log persists during your session for reference.
+
+### 7. Automatic File Filtering
+
+macOS metadata files are automatically excluded:
+- Files starting with `._` are filtered during loading
+- These are AppleDouble metadata files created by macOS
+- Prevents "Invalid WAV" errors
+- Filtered file count is reported in the log
 
 ## Troubleshooting
 
@@ -293,11 +357,17 @@ The log persists during your session for reference.
 2. Click "Run anyway"
 3. This is normal for unsigned open-source software
 
-### Problem: Changes don't appear after editing
+### Problem: Changes don't appear in pending queue
 
-**Cause**: View needs refreshing
+**Cause**: Need to click "Add to Queue" button in the dialog
 
-**Solution**: Click "Refresh View" button after making changes
+**Solution**: After editing fields, click "Add to Queue" (not "Cancel"). The dialog will close and changes will appear in the Pending Changes panel.
+
+### Problem: Apply All Changes button is grayed out
+
+**Cause**: No changes are queued
+
+**Solution**: Queue at least one change using Edit Common Fields, Edit Variable Fields, or Add Field. The button will become active when changes are pending.
 
 ### Problem: Application won't launch  (for source installations)
 
@@ -337,46 +407,55 @@ pip3 install guano
 
 ### Before Editing
 
-1. **Always create a backup first**
+1. **Maintain your own backups**
+   - Always work on a copy of your data, not your only copy
+   - Use version control or backup systems appropriate for your workflow
+   - Consider working on a test subset first for large datasets
    - Storage is cheap, data is precious
-   - Backups are timestamped and easy to identify
 
 2. **Review the data**
-   - Check Common Fields to ensure you're editing what you intend
+   - Check Common Fields to see what's shared across files
+   - Expand Variable Fields to understand variation
    - Verify file count matches expectations
 
-3. **Make incremental changes**
-   - Edit a few fields at a time
-   - Test on a small subset before processing large batches
+3. **Use the pending changes queue effectively**
+   - Queue all related changes together
+   - Review the complete list before applying
+   - Apply everything in one pass - much faster than multiple operations
 
 ### During Editing
 
 1. **Use clear, consistent naming**
-   - Site names: Use consistent format
+   - Site names: Use consistent format (e.g., "ForestPreserve_SiteA")
    - Species: Use standard abbreviations or full names
    - Notes: Be descriptive but concise
 
-2. **Check your work**
-   - Review the confirmation dialog carefully
-   - Verify which fields are being changed
+2. **Review pending changes carefully**
+   - Check the Pending Changes panel before applying
+   - Verify field names and values are correct
+   - Use "Remove Selected" to fix mistakes before applying
+   - The [C], [V→C], and [NEW] labels help identify change types
 
-3. **Keep notes**
-   - The Activity Log shows what was done
-   - Consider taking screenshots of important changes
+3. **Monitor progress**
+   - Watch the progress bar during operations
+   - Check the Activity Log for completion status
+   - Note any errors or warnings reported
 
 ### After Editing
 
 1. **Verify changes**
-   - Use "Refresh View" to see updated metadata
+   - The display automatically refreshes after applying changes
+   - Load files again to verify updates were written correctly
    - Open a few files in your analysis software to confirm
 
-2. **Keep backups**
-   - Don't delete backup folders immediately
-   - Store backups separately if editing valuable datasets
-
-3. **Document changes**
+2. **Document changes**
+   - Review the Activity Log for a record of what was done
    - Keep a separate log of major metadata updates
-   - Note date, changes made, and reason
+   - Note date, changes made, and reason for future reference
+
+3. **Test with analysis tools**
+   - Verify updated metadata appears in Kaleidoscope, SonoBat, etc.
+   - Ensure changes are compatible with your workflow
 
 ### Data Management
 
@@ -396,32 +475,46 @@ pip3 install guano
 
 ### Programmatic Access
 
-For advanced users, you can use the core module directly:
+For advanced users who need to automate metadata operations, you can use the core module directly:
 
 ```python
 from guano_metadata_manager import GuanoMetadataManager
 
 manager = GuanoMetadataManager()
-count, errors = manager.load_directory("/path/to/files")
+
+# Load files with progress callback
+def progress(current, total):
+    print(f"Loading: {current}/{total}")
+
+count, errors = manager.load_directory("/path/to/files", progress_callback=progress)
 
 # Get common fields
 common = manager.get_common_fields()
 
-# Update fields
-updates = {'Site Name': 'New Site Name'}
-manager.update_common_fields(updates)
+# Update fields across all files
+updates = {'Site Name': 'New Site Name', 'Species Manual ID': 'MYLU'}
+updated, errors = manager.update_common_fields(updates, progress_callback=progress)
+print(f"Updated {updated} files")
 ```
+
+**Note**: The programmatic API applies changes immediately. The pending changes queue is a GUI-only feature for user convenience.
 
 See `example_usage.py` for more examples.
 
 ### Batch Processing
 
-For processing multiple directories:
+For processing multiple directories efficiently:
 
-1. Process each directory separately
-2. Create backups for each
-3. Apply consistent metadata across sessions
-4. Use the Activity Log to track progress
+1. **Process each directory separately** using the GUI
+2. **Use the pending changes queue** to batch all edits together
+3. **Apply consistent metadata** across sessions by queuing the same field updates
+4. **Monitor the Activity Log** to track progress and any issues
+5. **For very large datasets** (10,000+ files):
+   - The app uses parallel processing and memory optimization
+   - Progress bars show real-time status
+   - Typically processes 100-1000 files per second depending on system
+
+**Pro tip**: Queue common field edits, variable field standardizations, and new field additions all at once for maximum efficiency!
 
 ### Integration with Analysis Pipelines
 
