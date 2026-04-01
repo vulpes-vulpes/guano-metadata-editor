@@ -24,11 +24,15 @@ class GuanoGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("GUANO Metadata Editor")
-        self.root.geometry("1000x700")
+        self.root.geometry("1000x850")
         
         # Initialize manager
         self.manager = GuanoMetadataManager()
         self.current_directory = None
+        
+        # Pending changes queue: list of (field_name, value, change_type) tuples
+        # change_type can be: 'common', 'variable', 'new'
+        self.pending_changes = []
         
         # Set up the GUI
         self._create_widgets()
@@ -65,7 +69,8 @@ class GuanoGUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(3, weight=1)
+        # Don't give pending changes section expandable weight - keep it fixed size
+        # main_frame.rowconfigure(3, weight=1)
         
         # === Directory Selection Section ===
         dir_frame = ttk.LabelFrame(main_frame, text="Directory Selection", padding="5")
@@ -90,7 +95,7 @@ class GuanoGUI:
         # === Notebook for metadata display ===
         notebook = ttk.Notebook(main_frame)
         notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-        main_frame.rowconfigure(1, weight=3)
+        main_frame.rowconfigure(1, weight=1)  # Let notebook expand, but pending section stays visible
         
         # Common Fields Tab
         self.common_frame = self._create_common_fields_tab(notebook)
@@ -112,16 +117,56 @@ class GuanoGUI:
         
         ttk.Button(button_frame, text="Edit Variable Fields", 
                   command=self.edit_variable_fields).grid(row=0, column=2, padx=5)
-        
-        ttk.Button(button_frame, text="Refresh View",
-                  command=self.refresh_display).grid(row=0, column=3, padx=5)
 
         ttk.Button(button_frame, text="Add Field",
-                  command=self.add_new_field).grid(row=0, column=4, padx=5)
+                  command=self.add_new_field).grid(row=0, column=3, padx=5)
+        
+        # === Pending Changes Section ===
+        pending_frame = ttk.LabelFrame(main_frame, text="Pending Changes", padding="5")
+        pending_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
+        pending_frame.columnconfigure(0, weight=1)
+        
+        # Scrollable list of pending changes
+        changes_list_frame = ttk.Frame(pending_frame)
+        changes_list_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        changes_list_frame.columnconfigure(0, weight=1)
+        
+        # Listbox with scrollbar for pending changes
+        list_scroll_frame = ttk.Frame(changes_list_frame)
+        list_scroll_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        list_scroll_frame.columnconfigure(0, weight=1)
+        
+        self.changes_listbox = tk.Listbox(list_scroll_frame, height=4, font=('Courier', 9))
+        self.changes_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        changes_scrollbar = ttk.Scrollbar(list_scroll_frame, orient=tk.VERTICAL, 
+                                         command=self.changes_listbox.yview)
+        changes_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.changes_listbox.configure(yscrollcommand=changes_scrollbar.set)
+        
+        # Buttons for managing pending changes
+        pending_buttons_frame = ttk.Frame(pending_frame)
+        pending_buttons_frame.grid(row=1, column=0, pady=(5, 0))
+        
+        ttk.Button(pending_buttons_frame, text="Remove Selected",
+                  command=self.remove_pending_change).grid(row=0, column=0, padx=5)
+        
+        ttk.Button(pending_buttons_frame, text="Clear All",
+                  command=self.clear_pending_changes).grid(row=0, column=1, padx=5)
+        
+        # Make Apply All Changes button prominent
+        self.apply_all_button = ttk.Button(pending_buttons_frame, text="▶ Apply All Changes",
+                  command=self.apply_all_pending_changes)
+        self.apply_all_button.grid(row=0, column=2, padx=10)
+        self.apply_all_button.config(state='disabled')  # Disabled when no changes pending
+        
+        self.pending_count_label = ttk.Label(pending_buttons_frame, text="No pending changes",
+                                             font=('Helvetica', 10, 'italic'))
+        self.pending_count_label.grid(row=0, column=3, padx=15)
         
         # === Progress Bar Section (initially hidden) ===
         self.progress_frame = ttk.Frame(main_frame, padding="5")
-        self.progress_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
+        self.progress_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=5)
         self.progress_frame.columnconfigure(0, weight=1)
         
         # Progress label
@@ -147,7 +192,7 @@ class GuanoGUI:
         
         # === Log/Status Area ===
         log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding="5")
-        log_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        log_frame.grid(row=5, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         
@@ -518,6 +563,170 @@ class GuanoGUI:
             messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
             self.log_message(f"Error: {str(e)}")
     
+    def add_pending_change(self, field_name: str, value: Any, change_type: str):
+        """Add a change to the pending changes queue."""
+        # Remove any existing change for this field
+        self.pending_changes = [(f, v, t) for f, v, t in self.pending_changes if f != field_name]
+        
+        # Add new change
+        self.pending_changes.append((field_name, value, change_type))
+        
+        # Update display
+        self._update_pending_changes_display()
+        
+        self.log_message(f"Queued change: {field_name} = {value} ({change_type})")
+    
+    def remove_pending_change(self):
+        """Remove selected change from pending queue."""
+        selection = self.changes_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a change to remove.")
+            return
+        
+        index = selection[0]
+        if 0 <= index < len(self.pending_changes):
+            field_name, value, change_type = self.pending_changes[index]
+            self.pending_changes.pop(index)
+            self._update_pending_changes_display()
+            self.log_message(f"Removed pending change: {field_name}")
+    
+    def clear_pending_changes(self):
+        """Clear all pending changes."""
+        if not self.pending_changes:
+            return
+        
+        if messagebox.askyesno("Clear All Changes", 
+                              f"Remove all {len(self.pending_changes)} pending changes?"):
+            self.pending_changes.clear()
+            self._update_pending_changes_display()
+            self.log_message("Cleared all pending changes")
+    
+    def _update_pending_changes_display(self):
+        """Update the pending changes listbox display."""
+        self.changes_listbox.delete(0, tk.END)
+        
+        for field_name, value, change_type in self.pending_changes:
+            # Format display string
+            type_label = {"common": "[C]", "variable": "[V→C]", "new": "[NEW]"}
+            display_value = str(value) if value else "<delete>"
+            if len(display_value) > 50:
+                display_value = display_value[:47] + "..."
+            
+            display_str = f"{type_label.get(change_type, '[?]')} {field_name}: {display_value}"
+            self.changes_listbox.insert(tk.END, display_str)
+        
+        # Update count label and button state
+        count = len(self.pending_changes)
+        if count == 0:
+            self.pending_count_label.config(text="No pending changes", foreground='gray')
+            self.apply_all_button.config(state='disabled')
+        else:
+            self.pending_count_label.config(
+                text=f"⚡ {count} change{'s' if count != 1 else ''} ready to apply",
+                foreground='#CC6600',
+                font=('Helvetica', 10, 'bold')
+            )
+            self.apply_all_button.config(state='normal')
+    
+    def apply_all_pending_changes(self):
+        """Apply all pending changes in one batch operation."""
+        if not self.pending_changes:
+            messagebox.showinfo("No Changes", "No pending changes to apply.")
+            return
+        
+        if self.manager.get_file_count() == 0:
+            messagebox.showwarning("No Files", "Please load files first.")
+            return
+        
+        # Build updates dictionary from pending changes
+        updates = {field_name: value for field_name, value, _ in self.pending_changes}
+        
+        # Final confirmation
+        file_count = self.manager.get_file_count()
+        change_list = "\n".join(
+            f"  • {field}: {value if value else '<delete>'}"
+            for field, value, _ in self.pending_changes
+        )
+        
+        confirm_msg = (
+            f"Apply {len(self.pending_changes)} changes to {file_count} files?\n\n"
+            f"{change_list}\n\n"
+            f"⚠️ This will modify the files. "
+            f"Creating a backup first is strongly recommended!"
+        )
+        
+        if not messagebox.askyesno("Confirm All Changes", confirm_msg, icon='warning'):
+            self.log_message("Changes cancelled by user")
+            return
+        
+        self.log_message(f"Applying {len(self.pending_changes)} changes to {file_count} files...")
+        
+        # Show progress bar
+        self._show_progress("Applying all pending changes to files...")
+        
+        # Variables to store results
+        result = {'updated_count': 0, 'errors': [], 'exception': None}
+        
+        def update_thread():
+            """Thread function for updating files."""
+            try:
+                def progress_callback(current, total):
+                    # Update progress from worker thread
+                    # Use default arguments to capture values, not references
+                    self.root.after_idle(lambda c=current, t=total: self._update_progress(c, t))
+                
+                # Update files with progress callback
+                updated_count, errors = self.manager.update_common_fields(updates, progress_callback=progress_callback)
+                result['updated_count'] = updated_count
+                result['errors'] = errors
+            except Exception as e:
+                result['exception'] = e
+        
+        # Start updating in a thread
+        thread = threading.Thread(target=update_thread, daemon=True)
+        thread.start()
+        
+        # Wait for thread to complete
+        while thread.is_alive():
+            self.root.update()
+            thread.join(timeout=0.1)
+        
+        # Hide progress bar
+        self._hide_progress()
+        
+        # Handle results
+        try:
+            if result['exception']:
+                raise result['exception']
+            
+            updated_count = result['updated_count']
+            errors = result['errors']
+            
+            if updated_count > 0:
+                messagebox.showinfo("Update Complete", 
+                    f"Successfully updated {updated_count} files with {len(self.pending_changes)} changes!")
+                self.log_message(f"Applied all changes to {updated_count} files successfully")
+                
+                if errors:
+                    self.log_message(f"Errors occurred in {len(errors)} files:")
+                    for error in errors[:3]:
+                        self.log_message(f"  - {error}")
+                
+                # Clear pending changes after successful apply
+                self.pending_changes.clear()
+                self._update_pending_changes_display()
+                
+                # Refresh display
+                self.refresh_display()
+            else:
+                messagebox.showerror("Update Failed", 
+                    "No files were updated.\n\n" + "\n".join(errors[:5]))
+                self.log_message("Update failed")
+        
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
+            self.log_message(f"Error: {str(e)}")
+    
     def log_message(self, message: str):
         """Add a message to the activity log."""
         self.log_text.insert(tk.END, message + "\n")
@@ -594,14 +803,14 @@ class EditDialog:
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=2, column=0, columnspan=2, pady=10)
         
-        ttk.Button(button_frame, text="Apply Changes", 
+        ttk.Button(button_frame, text="Add to Queue", 
                   command=self.apply_changes).grid(row=0, column=0, padx=5)
         
         ttk.Button(button_frame, text="Cancel", 
                   command=self.dialog.destroy).grid(row=0, column=1, padx=5)
     
     def apply_changes(self):
-        """Collect changes and apply them."""
+        """Gather all entry values and add them to the pending changes queue."""
         updates = {}
         
         for field, entry in self.entries.items():
@@ -629,9 +838,15 @@ class EditDialog:
             ):
                 return
 
-        # Close dialog and apply
+        # Add each change to the queue
+        for field, value in updates.items():
+            self.main_app.add_pending_change(field, value, 'common')
+        
         self.dialog.destroy()
-        self.main_app.apply_field_updates(updates)
+        messagebox.showinfo("Changes Queued", 
+            f"{len(updates)} change(s) added to the pending changes queue.\n\n"
+            "Click 'Apply All Changes' to process all pending changes.",
+            parent=self.main_app.root)
 
 
 class AddFieldDialog:
@@ -719,7 +934,7 @@ class AddFieldDialog:
         btn_frame = ttk.Frame(main_frame)
         btn_frame.grid(row=4, column=0, pady=(10, 0))
         ttk.Button(
-            btn_frame, text="Add Field", command=self.apply_changes,
+            btn_frame, text="Add to Queue", command=self.apply_changes,
         ).grid(row=0, column=0, padx=5)
         ttk.Button(
             btn_frame, text="Cancel", command=self.dialog.destroy,
@@ -1010,8 +1225,14 @@ class AddFieldDialog:
             ):
                 return
 
+        # Add to pending changes queue
+        self.main_app.add_pending_change(field_name, value, 'new')
+        
         self.dialog.destroy()
-        self.main_app.apply_field_updates({field_name: value})
+        messagebox.showinfo("Change Queued", 
+            f"New field '{field_name}' added to the pending changes queue.\n\n"
+            "Click 'Apply All Changes' to process all pending changes.",
+            parent=self.main_app.root)
 
 
 class EditVariableFieldsDialog:
@@ -1121,14 +1342,14 @@ class EditVariableFieldsDialog:
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=3, column=0, columnspan=2, pady=10)
         
-        ttk.Button(button_frame, text="Apply Changes", 
+        ttk.Button(button_frame, text="Add to Queue", 
                   command=self.apply_changes).grid(row=0, column=0, padx=5)
         
         ttk.Button(button_frame, text="Cancel", 
                   command=self.dialog.destroy).grid(row=0, column=1, padx=5)
     
     def apply_changes(self):
-        """Collect changes and apply them."""
+        """Collect changes and add them to the pending changes queue."""
         updates = {}
         
         for field, entry in self.entries.items():
@@ -1142,20 +1363,6 @@ class EditVariableFieldsDialog:
             messagebox.showinfo("No Changes", 
                 "No fields were modified. Enter values to standardize fields.",
                 parent=self.dialog)
-            return
-        
-        # Final confirmation
-        file_count = self.main_app.manager.get_file_count()
-        update_list = "\n".join(f"  • {field}: {value}" for field, value in updates.items())
-        
-        confirm_msg = (
-            f"⚠️ This will OVERWRITE existing values in {file_count} files:\n\n"
-            f"{update_list}\n\n"
-            f"This action will standardize these variable fields. Continue?"
-        )
-        
-        if not messagebox.askyesno("Confirm Overwrite", confirm_msg, 
-                                   icon='warning', parent=self.dialog):
             return
         
         # Warn before modifying any protected fields
@@ -1172,9 +1379,15 @@ class EditVariableFieldsDialog:
             ):
                 return
         
-        # Close dialog and apply
+        # Add each change to the queue as 'variable' type
+        for field, value in updates.items():
+            self.main_app.add_pending_change(field, value, 'variable')
+        
         self.dialog.destroy()
-        self.main_app.apply_field_updates(updates)
+        messagebox.showinfo("Changes Queued", 
+            f"{len(updates)} variable field standardization(s) added to the pending changes queue.\n\n"
+            "Click 'Apply All Changes' to process all pending changes.",
+            parent=self.main_app.root)
 
 
 def main():
