@@ -6,7 +6,6 @@ Provides functionality to analyze metadata consistency across multiple files.
 """
 
 import os
-import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple, Any, Optional, Callable
@@ -434,45 +433,6 @@ class GuanoMetadataManager:
     def get_file_count(self) -> int:
         """Get the number of loaded files."""
         return len(self.files)
-    
-    def create_backup(self, backup_dir: Optional[str] = None) -> Tuple[bool, str]:
-        """
-        Create backup copies of all loaded files.
-        
-        Args:
-            backup_dir: Optional custom backup directory path.
-                       If None, creates timestamped folder in same location.
-        
-        Returns:
-            Tuple of (success, backup_path or error_message)
-        """
-        if not self.files:
-            return False, "No files loaded"
-        
-        try:
-            # Create backup directory
-            if backup_dir is None:
-                parent_dir = self.files[0].parent
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_path = parent_dir / f"GUANO_backup_{timestamp}"
-            else:
-                backup_path = Path(backup_dir)
-            
-            backup_path.mkdir(parents=True, exist_ok=True)
-            
-            # Copy all files
-            for file_path in self.files:
-                dest = backup_path / file_path.name
-                shutil.copy2(file_path, dest)
-                logger.info(f"Backed up: {file_path.name}")
-            
-            logger.info(f"Backup created at: {backup_path}")
-            return True, str(backup_path)
-            
-        except Exception as e:
-            error_msg = f"Backup failed: {str(e)}"
-            logger.error(error_msg)
-            return False, error_msg
     
     def _coerce_field_value(self, field: str, value: str) -> Any:
         """

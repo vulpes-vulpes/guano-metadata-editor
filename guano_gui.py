@@ -109,17 +109,14 @@ class GuanoGUI:
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=2, column=0, pady=10)
         
-        ttk.Button(button_frame, text="Create Backup", 
-                  command=self.create_backup).grid(row=0, column=0, padx=5)
-        
         ttk.Button(button_frame, text="Edit Common Fields", 
-                  command=self.edit_common_fields).grid(row=0, column=1, padx=5)
+                  command=self.edit_common_fields).grid(row=0, column=0, padx=5)
         
         ttk.Button(button_frame, text="Edit Variable Fields", 
-                  command=self.edit_variable_fields).grid(row=0, column=2, padx=5)
+                  command=self.edit_variable_fields).grid(row=0, column=1, padx=5)
 
         ttk.Button(button_frame, text="Add Field",
-                  command=self.add_new_field).grid(row=0, column=3, padx=5)
+                  command=self.add_new_field).grid(row=0, column=2, padx=5)
         
         # === Pending Changes Section ===
         pending_frame = ttk.LabelFrame(main_frame, text="Pending Changes", padding="5")
@@ -406,39 +403,6 @@ class GuanoGUI:
         
         self.log_message(f"Display refreshed: {len(common_fields)} common, "
                         f"{len(variable_fields)} variable fields")
-    
-    def create_backup(self):
-        """Create backup of all loaded files."""
-        if self.manager.get_file_count() == 0:
-            messagebox.showwarning("No Files", "Please load files first.")
-            return
-        
-        # Confirm backup
-        if not messagebox.askyesno("Create Backup", 
-            f"Create backup copies of {self.manager.get_file_count()} files?\n\n"
-            "A timestamped backup folder will be created in the same directory."):
-            return
-        
-        self.log_message("Creating backup...")
-        self.root.config(cursor="watch")
-        self.root.update()
-        
-        try:
-            success, result = self.manager.create_backup()
-            
-            if success:
-                messagebox.showinfo("Backup Complete", 
-                    f"Backup created successfully!\n\nLocation: {result}")
-                self.log_message(f"Backup created: {result}")
-            else:
-                messagebox.showerror("Backup Failed", result)
-                self.log_message(f"Backup failed: {result}")
-        
-        except Exception as e:
-            messagebox.showerror("Error", f"Backup error: {str(e)}")
-            self.log_message(f"Backup error: {str(e)}")
-        finally:
-            self.root.config(cursor="")
     
     def edit_common_fields(self):
         """Open dialog to edit common metadata fields."""
