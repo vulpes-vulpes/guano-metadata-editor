@@ -6,6 +6,7 @@ in WAV files containing bat vocalizations.
 """
 
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
@@ -16,6 +17,41 @@ from guano_metadata_manager import (
     GuanoMetadataManager, format_value,
     GUANO_STANDARD_FIELDS, GUANO_RESERVED_NAMESPACES, GUANO_PROTECTED_FIELDS,
 )
+
+
+_FONT_CACHE: Dict[tuple, tkfont.Font] = {}
+
+
+def _ui_font(size_delta: int = 0, **overrides) -> tkfont.Font:
+    """Return a variant of the platform's default UI font.
+
+    Deriving from TkDefaultFont keeps text native on every OS (e.g. Segoe UI
+    on Windows); hardcoded families like 'Helvetica' get substituted at
+    inconsistent sizes on platforms that lack them.
+    """
+    key = (size_delta, tuple(sorted(overrides.items())))
+    font = _FONT_CACHE.get(key)
+    if font is None:
+        font = tkfont.nametofont('TkDefaultFont').copy()
+        if size_delta:
+            size = font.cget('size')
+            # A negative size means pixels; adjust magnitude accordingly.
+            font.configure(size=size + size_delta if size > 0 else size - size_delta)
+        if overrides:
+            font.configure(**overrides)
+        _FONT_CACHE[key] = font
+    return font
+
+
+def _match_theme_background(canvas: tk.Canvas) -> None:
+    """Give a plain tk Canvas the ttk theme's frame background.
+
+    tk.Canvas is not theme-aware; its default background is white on
+    Windows, which shows through around scrollable ttk content.
+    """
+    background = ttk.Style().lookup('TFrame', 'background')
+    if background:
+        canvas.configure(background=background)
 
 
 class GuanoGUI:
@@ -54,9 +90,12 @@ class GuanoGUI:
             style.theme_use('clam')
         
         # Configure custom styles
-        style.configure('Title.TLabel', font=('Helvetica', 12, 'bold'))
-        style.configure('Header.TLabel', font=('Helvetica', 10, 'bold'))
+        style.configure('Title.TLabel', font=_ui_font(size_delta=3, weight='bold'))
+        style.configure('Header.TLabel', font=_ui_font(size_delta=1, weight='bold'))
         style.configure('Warning.TLabel', foreground='red')
+        # Section/field titles on all labelframes (main-window sections and
+        # per-field boxes); themes otherwise render these titles undersized.
+        style.configure('TLabelframe.Label', font=_ui_font(weight='bold'))
     
     def _create_widgets(self):
         """Create all GUI widgets."""
@@ -133,7 +172,7 @@ class GuanoGUI:
         list_scroll_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         list_scroll_frame.columnconfigure(0, weight=1)
         
-        self.changes_listbox = tk.Listbox(list_scroll_frame, height=4, font=('Courier', 9))
+        self.changes_listbox = tk.Listbox(list_scroll_frame, height=4, font='TkFixedFont')
         self.changes_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E))
         
         changes_scrollbar = ttk.Scrollbar(list_scroll_frame, orient=tk.VERTICAL, 
@@ -158,7 +197,7 @@ class GuanoGUI:
         self.apply_all_button.config(state='disabled')  # Disabled when no changes pending
         
         self.pending_count_label = ttk.Label(pending_buttons_frame, text="No pending changes",
-                                             font=('Helvetica', 10, 'italic'))
+                                             font=_ui_font(slant='italic'))
         self.pending_count_label.grid(row=0, column=3, padx=15)
         
         # === Progress Bar Section (initially hidden) ===
@@ -167,7 +206,7 @@ class GuanoGUI:
         self.progress_frame.columnconfigure(0, weight=1)
         
         # Progress label
-        self.progress_label = ttk.Label(self.progress_frame, text="", font=('Helvetica', 9))
+        self.progress_label = ttk.Label(self.progress_frame, text="")
         self.progress_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 2))
         
         # Progress bar
@@ -181,7 +220,7 @@ class GuanoGUI:
         self.progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 2))
         
         # Progress status (count)
-        self.progress_status = ttk.Label(self.progress_frame, text="", font=('Courier', 9))
+        self.progress_status = ttk.Label(self.progress_frame, text="", font='TkFixedFont')
         self.progress_status.grid(row=2, column=0, sticky=tk.W)
         
         # Hide progress bar initially
@@ -582,13 +621,14 @@ class GuanoGUI:
         # Update count label and button state
         count = len(self.pending_changes)
         if count == 0:
-            self.pending_count_label.config(text="No pending changes", foreground='gray')
+            self.pending_count_label.config(text="No pending changes", foreground='gray',
+                                            font=_ui_font(slant='italic'))
             self.apply_all_button.config(state='disabled')
         else:
             self.pending_count_label.config(
                 text=f"⚡ {count} change{'s' if count != 1 else ''} ready to apply",
                 foreground='#CC6600',
-                font=('Helvetica', 10, 'bold')
+                font=_ui_font(weight='bold')
             )
             self.apply_all_button.config(state='normal')
     
@@ -732,18 +772,25 @@ class EditDialog:
             style='Header.TLabel', wraplength=550).grid(row=0, column=0, columnspan=3, pady=10, sticky=tk.W)
         
         # Create scrollable frame for fields
-        canvas = tk.Canvas(main_frame, highlightthickness=0)
+        canvas = tk.Canvas(main_frame, highlightthickness=0, borderwidth=0)
+        _match_theme_background(canvas)
         scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
-        
+
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
+
+        frame_id = canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
+        # Stretch the inner frame to the canvas width so content fills the
+        # dialog and no bare canvas background shows beside it.
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(frame_id, width=e.width)
+        )
         canvas.configure(yscrollcommand=scrollbar.set)
-        
+
         canvas.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=1, column=3, sticky=(tk.N, tk.S))
         
@@ -752,8 +799,8 @@ class EditDialog:
         
         for i, (field, value) in enumerate(sorted(self.fields.items())):
             # Field label
-            ttk.Label(scrollable_frame, text=f"{field}:", 
-                     font=('Helvetica', 9, 'bold')).grid(
+            ttk.Label(scrollable_frame, text=f"{field}:",
+                     font=_ui_font(weight='bold')).grid(
                 row=i*3, column=0, sticky=tk.W, padx=5, pady=(5,0))
             
             # Delete checkbox
@@ -1023,7 +1070,6 @@ class AddFieldDialog:
         ttk.Label(
             frame,
             textvariable=self.preview_var,
-            font=("Helvetica", 9),
             foreground="#333333",
         ).grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
@@ -1259,7 +1305,7 @@ class EditVariableFieldsDialog:
         warning_frame.grid(row=0, column=0, pady=(0, 10), sticky=(tk.W, tk.E))
         warning_frame.columnconfigure(1, weight=1)
         
-        ttk.Label(warning_frame, text="⚠️", font=('Helvetica', 16)).grid(
+        ttk.Label(warning_frame, text="⚠️", font=_ui_font(size_delta=6)).grid(
             row=0, column=0, padx=(0, 10), sticky=tk.N)
         
         ttk.Label(warning_frame,
@@ -1275,18 +1321,25 @@ class EditVariableFieldsDialog:
             style='Header.TLabel', wraplength=650).grid(row=1, column=0, pady=(0, 10), sticky=tk.W)
         
         # Create scrollable frame for fields
-        canvas = tk.Canvas(main_frame, highlightthickness=0)
+        canvas = tk.Canvas(main_frame, highlightthickness=0, borderwidth=0)
+        _match_theme_background(canvas)
         scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
-        
+
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
+
+        frame_id = canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
+        # Stretch the inner frame to the canvas width so content fills the
+        # dialog and no bare canvas background shows beside it.
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(frame_id, width=e.width)
+        )
         canvas.configure(yscrollcommand=scrollbar.set)
-        
+
         canvas.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=2, column=1, sticky=(tk.N, tk.S))
         
@@ -1312,8 +1365,8 @@ class EditVariableFieldsDialog:
             if len(values) > 5:
                 values_text += f"  ... and {len(values) - 5} more file(s)"
             
-            ttk.Label(field_frame, text=values_text, 
-                     font=('Courier', 9), foreground='#666').grid(
+            ttk.Label(field_frame, text=values_text,
+                     font='TkFixedFont', foreground='#666').grid(
                 row=0, column=0, sticky=tk.W, pady=(0, 5))
             
             # New value entry with delete option
@@ -1321,8 +1374,7 @@ class EditVariableFieldsDialog:
             entry_frame.grid(row=1, column=0, sticky=(tk.W, tk.E))
             entry_frame.columnconfigure(1, weight=1)
             
-            ttk.Label(entry_frame, text="New value:",
-                     font=('Helvetica', 9)).grid(
+            ttk.Label(entry_frame, text="New value:").grid(
                 row=0, column=0, sticky=tk.W, padx=(0, 5))
             
             entry = ttk.Entry(entry_frame, width=50)
