@@ -9,6 +9,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, Any, List, Tuple
 import sys
 import threading
@@ -179,6 +180,15 @@ class GuanoGUI:
 
         ttk.Button(button_frame, text="Add Field",
                   command=self.add_new_field).grid(row=0, column=2, padx=5)
+
+        # Separator marks a boundary: the buttons to its left queue changes
+        # for later batch application, but Check/Fix Timestamps applies its
+        # own corrections immediately and isn't part of that queue.
+        ttk.Separator(button_frame, orient=tk.VERTICAL).grid(
+            row=0, column=3, sticky=(tk.N, tk.S), padx=10)
+
+        ttk.Button(button_frame, text="Check / Fix Timestamps",
+                  command=self.check_timestamps).grid(row=0, column=4, padx=5)
         
         # === Pending Changes Section ===
         pending_frame = ttk.LabelFrame(main_frame, text="Pending Changes", padding="5")
@@ -496,6 +506,92 @@ class GuanoGUI:
 
         # Open edit dialog
         EditVariableFieldsDialog(self.root, self, variable_fields)
+
+    def check_timestamps(self):
+        """Open dialog to compare GUANO Timestamps against filenames."""
+        if self.manager.get_file_count() == 0:
+            messagebox.showwarning("No Files", "Please load files first.")
+            return
+
+        results = self.manager.check_timestamps()
+
+        if not any(r['filename_timestamp'] is not None for r in results):
+            messagebox.showinfo("No Timestamps Found",
+                "Could not find a YYYYMMDD_HHMMSS timestamp pattern in any loaded filename.")
+            return
+
+        TimestampCheckDialog(self.root, self, results)
+
+    def apply_timestamp_corrections(self, corrections: Dict[str, datetime]):
+        """Apply per-file timestamp corrections (bypasses the pending-changes queue,
+        since each file receives its own distinct value rather than one shared value)."""
+        if not corrections:
+            self.log_message("No timestamp corrections to apply")
+            return
+
+        file_count = len(corrections)
+        confirm_msg = (
+            f"Correct the GUANO Timestamp in {file_count} file(s) to match their filenames?\n\n"
+            f"⚠️ This will modify the files. "
+            f"Creating a backup first is strongly recommended!"
+        )
+
+        if not messagebox.askyesno("Confirm Timestamp Corrections", confirm_msg, icon='warning'):
+            self.log_message("Timestamp corrections cancelled by user")
+            return
+
+        self.log_message(f"Correcting timestamps in {file_count} files...")
+        self._show_progress("Correcting timestamps...")
+
+        result = {'updated_count': 0, 'errors': [], 'exception': None}
+
+        def update_thread():
+            try:
+                def progress_callback(current, total):
+                    self.root.after_idle(lambda c=current, t=total: self._update_progress(c, t))
+
+                updated_count, errors = self.manager.update_per_file_timestamps(
+                    corrections, progress_callback=progress_callback)
+                result['updated_count'] = updated_count
+                result['errors'] = errors
+            except Exception as e:
+                result['exception'] = e
+
+        thread = threading.Thread(target=update_thread, daemon=True)
+        thread.start()
+
+        while thread.is_alive():
+            self.root.update()
+            thread.join(timeout=0.1)
+
+        self._hide_progress()
+
+        try:
+            if result['exception']:
+                raise result['exception']
+
+            updated_count = result['updated_count']
+            errors = result['errors']
+
+            if updated_count > 0:
+                messagebox.showinfo("Timestamps Corrected",
+                    f"Successfully corrected {updated_count} file(s)!")
+                self.log_message(f"Corrected timestamps in {updated_count} files successfully")
+
+                if errors:
+                    self.log_message(f"Errors occurred in {len(errors)} files:")
+                    for error in errors[:3]:
+                        self.log_message(f"  - {error}")
+
+                self.refresh_display()
+            else:
+                messagebox.showerror("Correction Failed",
+                    "No files were updated.\n\n" + "\n".join(errors[:5]))
+                self.log_message("Timestamp correction failed")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
+            self.log_message(f"Error: {str(e)}")
 
     def add_new_field(self):
         """Open dialog to add a new metadata field to all loaded files."""
@@ -1479,10 +1575,193 @@ class EditVariableFieldsDialog:
             self.main_app.add_pending_change(field, value, 'variable')
         
         self.dialog.destroy()
-        messagebox.showinfo("Changes Queued", 
+        messagebox.showinfo("Changes Queued",
             f"{len(updates)} variable field standardization(s) added to the pending changes queue.\n\n"
             "Click 'Apply All Changes' to process all pending changes.",
             parent=self.main_app.root)
+
+
+class TimestampCheckDialog:
+    """
+    Dialog comparing each file's GUANO Timestamp against a timestamp parsed
+    from its filename, letting the user selectively correct mismatches.
+
+    Uses a Treeview rather than one widget-row per file (the pattern used
+    by the other edit dialogs) since datasets here can run into the
+    thousands of files - a Treeview stays responsive at that scale where
+    building that many individual ttk widgets would not.
+
+    This applies directly rather than going through the pending-changes
+    queue: that queue's model is one value per field shared by every file,
+    but each file here needs its own distinct corrected value.
+    """
+
+    _CORRECTABLE_TAGS = ('mismatch', 'missing')
+
+    def __init__(self, parent, main_app, results: List[Dict[str, Any]]):
+        self.main_app = main_app
+        self.results = results
+        # filepath (str) -> bool, only for rows that can be corrected
+        self.selected: Dict[str, bool] = {}
+
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Check Timestamps")
+        self.dialog.geometry("800x550")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+
+        self._create_widgets()
+
+    def _create_widgets(self):
+        main_frame = ttk.Frame(self.dialog, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        self.dialog.columnconfigure(0, weight=1)
+        self.dialog.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
+
+        ttk.Label(main_frame,
+            text="This tool compares the GUANO Timestamp value to that encoded in the "
+                 "filename. In case of a mismatch, clicking Apply will modify the GUANO "
+                 "field to match the filename.",
+            style='Header.TLabel', wraplength=760).grid(
+            row=0, column=0, columnspan=2, pady=(0, 10), sticky=tk.W)
+
+        columns = ('selected', 'filename', 'filename_ts', 'current_ts', 'status')
+        tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=18)
+        self.tree = tree
+
+        tree.heading('selected', text='Fix?')
+        tree.heading('filename', text='Filename')
+        tree.heading('filename_ts', text='Filename Time')
+        tree.heading('current_ts', text='Current GUANO Timestamp')
+        tree.heading('status', text='Status')
+
+        tree.column('selected', width=45, anchor=tk.CENTER, stretch=False)
+        tree.column('filename', width=220)
+        tree.column('filename_ts', width=150)
+        tree.column('current_ts', width=180)
+        tree.column('status', width=140)
+
+        tree.tag_configure('mismatch', foreground='#CC6600')
+        tree.tag_configure('missing', foreground='#CC6600')
+        tree.tag_configure('match', foreground='#2E7D32')
+        tree.tag_configure('nodata', foreground='gray')
+
+        for result in self.results:
+            filepath_str = str(result['filepath'])
+            filename_ts = result['filename_timestamp']
+            current_ts = result['current_timestamp']
+            matches = result['matches']
+
+            if filename_ts is None:
+                status, tag, correctable = "— No timestamp in filename", 'nodata', False
+            elif current_ts is None:
+                status, tag, correctable = "⚠ Missing Timestamp field", 'missing', True
+            elif matches:
+                status, tag, correctable = "✓ Match", 'match', True
+            else:
+                status, tag, correctable = "⚠ Mismatch", 'mismatch', True
+
+            if correctable:
+                # Pre-select the files that actually need a fix.
+                self.selected[filepath_str] = tag in self._CORRECTABLE_TAGS and not matches
+
+            checkbox = ('☑' if self.selected.get(filepath_str) else '☐') if correctable else ''
+
+            tree.insert('', tk.END, iid=filepath_str, tags=(tag,), values=(
+                checkbox,
+                result['filename'],
+                str(filename_ts) if filename_ts else '—',
+                str(current_ts) if current_ts else '—',
+                status,
+            ))
+
+        tree.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        tree.bind('<Button-1>', self._on_tree_click)
+
+        # === Buttons ===
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+
+        ttk.Button(button_frame, text="Select All Mismatches",
+                  command=self._select_all_mismatches).grid(row=0, column=0, padx=5)
+
+        ttk.Button(button_frame, text="Deselect All",
+                  command=self._deselect_all).grid(row=0, column=1, padx=5)
+
+        ttk.Button(button_frame, text="Apply Selected",
+                  command=self.apply_changes).grid(row=0, column=2, padx=5)
+
+        ttk.Button(button_frame, text="Cancel",
+                  command=self.dialog.destroy).grid(row=0, column=3, padx=5)
+
+    def _on_tree_click(self, event):
+        """Toggle a row's checkbox when its 'Fix?' cell is clicked."""
+        if self.tree.identify_region(event.x, event.y) != 'cell':
+            return
+        if self.tree.identify_column(event.x) != '#1':
+            return
+
+        filepath_str = self.tree.identify_row(event.y)
+        if filepath_str not in self.selected:
+            return  # not a correctable row
+
+        self.selected[filepath_str] = not self.selected[filepath_str]
+        checkbox = '☑' if self.selected[filepath_str] else '☐'
+        self.tree.set(filepath_str, 'selected', checkbox)
+
+    def _set_all(self, filepath_str_predicate):
+        for filepath_str in self.selected:
+            self.selected[filepath_str] = filepath_str_predicate(filepath_str)
+            checkbox = '☑' if self.selected[filepath_str] else '☐'
+            self.tree.set(filepath_str, 'selected', checkbox)
+
+    def _select_all_mismatches(self):
+        # 'mismatch'/'missing' tagged rows are exactly the correctable ones;
+        # read each row's tag back from the tree to decide.
+        mismatched = {
+            filepath_str for filepath_str in self.selected
+            if self.tree.item(filepath_str, 'tags')[0] in self._CORRECTABLE_TAGS
+        }
+        self._set_all(lambda f: f in mismatched)
+
+    def _deselect_all(self):
+        self._set_all(lambda f: False)
+
+    def apply_changes(self):
+        """Build corrected timestamps for selected files and apply them."""
+        by_filepath = {str(r['filepath']): r for r in self.results}
+
+        corrections: Dict[str, datetime] = {}
+        for filepath_str, is_selected in self.selected.items():
+            if not is_selected:
+                continue
+
+            result = by_filepath[filepath_str]
+            filename_ts = result['filename_timestamp']
+            current_ts = result['current_timestamp']
+
+            # Preserve any existing UTC offset - filenames don't carry one,
+            # so dropping it would lose information the spec asks for.
+            if isinstance(current_ts, datetime) and current_ts.tzinfo is not None:
+                filename_ts = filename_ts.replace(tzinfo=current_ts.tzinfo)
+
+            corrections[filepath_str] = filename_ts
+
+        if not corrections:
+            messagebox.showinfo("No Changes", "No files were selected for correction.",
+                               parent=self.dialog)
+            return
+
+        self.dialog.destroy()
+        self.main_app.apply_timestamp_corrections(corrections)
 
 
 def main():

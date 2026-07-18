@@ -6,6 +6,7 @@ Provides functionality to analyze metadata consistency across multiple files.
 """
 
 import os
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple, Any, Optional, Callable
@@ -185,6 +186,31 @@ GUANO_RESERVED_NAMESPACES: Dict[str, str] = {
 # Fields that should not be silently overwritten; the user should be
 # explicitly warned before any change is made.
 GUANO_PROTECTED_FIELDS: set = {"GUANO|Version"}
+
+# Matches an 8-digit date and 6-digit time (e.g. '20220625_212022') as
+# produced by common bat-detector filename conventions. findall() is used
+# so a filename with stray digits before the real timestamp (e.g. a site
+# code) still resolves to the last, correct match.
+_FILENAME_TIMESTAMP_RE = re.compile(r'(\d{8})_(\d{6})')
+
+
+def extract_timestamp_from_filename(filename: str) -> Optional[datetime]:
+    """
+    Extract a recording timestamp embedded in a filename.
+
+    Looks for an 8-digit date followed by a 6-digit time (YYYYMMDD_HHMMSS),
+    which is how most bat detector software names its output files. Returns
+    None if no such pattern is found or the digits don't form a valid date.
+    """
+    matches = _FILENAME_TIMESTAMP_RE.findall(filename)
+    if not matches:
+        return None
+
+    date_str, time_str = matches[-1]
+    try:
+        return datetime.strptime(date_str + time_str, '%Y%m%d%H%M%S')
+    except ValueError:
+        return None
 
 
 class GuanoMetadataManager:
@@ -641,7 +667,125 @@ class GuanoMetadataManager:
         # Clear temporary storage
         temp_metadata.clear()
         logger.info("Field analysis refreshed")
-    
+
+    def check_timestamps(self) -> List[Dict[str, Any]]:
+        """
+        Compare each file's GUANO Timestamp against a timestamp embedded in
+        its filename, without re-reading any files (reuses the cached field
+        analysis from load_directory/_refresh_analysis).
+
+        Returns:
+            One dict per loaded file with keys: 'filepath', 'filename',
+            'filename_timestamp', 'current_timestamp', 'matches'. 'matches'
+            is True/False when both timestamps are available for comparison,
+            or None when there's nothing to compare (e.g. no timestamp
+            pattern in the filename, or no GUANO Timestamp field).
+        """
+        # Look up each file's current Timestamp from whichever cache holds
+        # it - common_fields if every file happens to share one value,
+        # otherwise variable_fields (the normal case, since timestamps
+        # almost always differ file to file).
+        current_by_filename: Dict[str, Any] = {}
+        if 'Timestamp' in self.common_fields:
+            shared_value = self.common_fields['Timestamp']
+            for filepath in self.files:
+                current_by_filename[filepath.name] = shared_value
+        for filename, value in self.variable_fields.get('Timestamp', []):
+            current_by_filename[filename] = value
+
+        results = []
+        for filepath in self.files:
+            filename = filepath.name
+            filename_ts = extract_timestamp_from_filename(filename)
+            current_ts = current_by_filename.get(filename)
+
+            matches = None
+            if filename_ts is not None and isinstance(current_ts, datetime):
+                # Filenames only encode whole seconds and carry no timezone,
+                # so compare wall-clock time to second precision only,
+                # ignoring any UTC offset or sub-second detail on the
+                # stored timestamp.
+                current_truncated = current_ts.replace(tzinfo=None, microsecond=0)
+                matches = (filename_ts == current_truncated)
+
+            results.append({
+                'filepath': filepath,
+                'filename': filename,
+                'filename_timestamp': filename_ts,
+                'current_timestamp': current_ts,
+                'matches': matches,
+            })
+
+        return results
+
+    def update_per_file_timestamps(self, corrections: Dict[str, datetime], parallel: bool = True,
+                                   max_workers: Optional[int] = None,
+                                   progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[int, List[str]]:
+        """
+        Write a distinct GUANO Timestamp value to each of several files.
+
+        Unlike update_common_fields (which applies one value to every
+        loaded file), each file here gets its own corrected value - so
+        each is submitted with its own single-field update dict.
+
+        Args:
+            corrections: Mapping of filepath (str) to the new Timestamp
+                (a datetime) to write to that file.
+            parallel: Whether to use parallel processing (default: True)
+            max_workers: Maximum number of worker threads
+            progress_callback: Optional callback(current, total)
+
+        Returns:
+            Tuple of (number of files updated, list of error messages)
+        """
+        if not corrections:
+            return 0, ["No timestamp corrections provided"]
+
+        errors = []
+        updated_count = 0
+        total = len(corrections)
+
+        if max_workers is None:
+            max_workers = min(total, multiprocessing.cpu_count() * 2)
+
+        if parallel and total > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_filepath = {
+                    executor.submit(self._update_single_file, Path(filepath), {'Timestamp': new_value}): filepath
+                    for filepath, new_value in corrections.items()
+                }
+
+                processed = 0
+                for future in as_completed(future_to_filepath):
+                    filepath = future_to_filepath[future]
+                    try:
+                        success, error_msg = future.result()
+                        if success:
+                            updated_count += 1
+                        else:
+                            errors.append(error_msg)
+                    except Exception as e:
+                        errors.append(f"Unexpected error updating {Path(filepath).name}: {str(e)}")
+
+                    processed += 1
+                    if progress_callback:
+                        progress_callback(processed, total)
+        else:
+            for idx, (filepath, new_value) in enumerate(corrections.items(), 1):
+                success, error_msg = self._update_single_file(Path(filepath), {'Timestamp': new_value})
+                if success:
+                    updated_count += 1
+                else:
+                    errors.append(error_msg)
+                if progress_callback:
+                    progress_callback(idx, total)
+
+        if updated_count > 0:
+            logger.info(f"Corrected timestamps in {updated_count} files, refreshing analysis...")
+            self._refresh_analysis()
+
+        return updated_count, errors
+
     def get_field_info(self, field_name: str) -> Dict[str, Any]:
         """
         Get detailed information about a specific metadata field.
