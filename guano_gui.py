@@ -43,6 +43,29 @@ def _ui_font(size_delta: int = 0, **overrides) -> tkfont.Font:
     return font
 
 
+def _bind_mousewheel(window: tk.Toplevel, canvas: tk.Canvas) -> None:
+    """Let the mouse wheel scroll the canvas from anywhere in the window.
+
+    tk.Canvas has no built-in wheel binding (unlike Text/Listbox), so
+    scrollable dialogs otherwise only respond to the scrollbar. Wheel
+    events over any child widget propagate to the toplevel's binding.
+    Each platform reports wheel events differently: macOS deltas are
+    already in scroll units, Windows uses multiples of 120, and X11
+    (Linux) delivers wheel motion as button 4/5 presses.
+    """
+    if sys.platform == 'darwin':
+        # macOS trackpads fire a rapid stream of small-delta events. With the
+        # default scroll unit (a tenth of the window height) each event jumps
+        # far too much; use small pixel steps so the gesture maps smoothly.
+        canvas.configure(yscrollincrement=4)
+        window.bind('<MouseWheel>', lambda e: canvas.yview_scroll(-e.delta, 'units'))
+    else:
+        window.bind('<MouseWheel>',
+                    lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, 'units'))
+        window.bind('<Button-4>', lambda e: canvas.yview_scroll(-1, 'units'))
+        window.bind('<Button-5>', lambda e: canvas.yview_scroll(1, 'units'))
+
+
 def _match_theme_background(canvas: tk.Canvas) -> None:
     """Give a plain tk Canvas the ttk theme's frame background.
 
@@ -790,6 +813,7 @@ class EditDialog:
             lambda e: canvas.itemconfigure(frame_id, width=e.width)
         )
         canvas.configure(yscrollcommand=scrollbar.set)
+        _bind_mousewheel(self.dialog, canvas)
 
         canvas.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=1, column=3, sticky=(tk.N, tk.S))
@@ -1339,6 +1363,7 @@ class EditVariableFieldsDialog:
             lambda e: canvas.itemconfigure(frame_id, width=e.width)
         )
         canvas.configure(yscrollcommand=scrollbar.set)
+        _bind_mousewheel(self.dialog, canvas)
 
         canvas.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=2, column=1, sticky=(tk.N, tk.S))
