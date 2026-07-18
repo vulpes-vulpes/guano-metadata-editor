@@ -1321,8 +1321,8 @@ class EditVariableFieldsDialog:
             entry_frame.grid(row=1, column=0, sticky=(tk.W, tk.E))
             entry_frame.columnconfigure(1, weight=1)
             
-            ttk.Label(entry_frame, text="New value:", 
-                     font=('Helvetica', 9, 'bold')).grid(
+            ttk.Label(entry_frame, text="New value:",
+                     font=('Helvetica', 9)).grid(
                 row=0, column=0, sticky=tk.W, padx=(0, 5))
             
             entry = ttk.Entry(entry_frame, width=50)
