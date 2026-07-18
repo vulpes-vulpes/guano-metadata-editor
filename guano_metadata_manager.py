@@ -282,9 +282,13 @@ class GuanoMetadataManager:
             errors.append(f"Path is not a directory: {directory}")
             return 0, errors
         
-        # Find all WAV files (case-insensitive)
-        all_wav_files = list(directory_path.glob('**/*.wav')) + \
-                        list(directory_path.glob('**/*.WAV'))
+        # Find all WAV files with a single walk, filtering extensions
+        # case-insensitively. Separate '*.wav'/'*.WAV' globs would match the
+        # same file twice on Windows, where glob patterns ignore case.
+        all_wav_files = sorted(
+            f for f in directory_path.rglob('*')
+            if f.suffix.lower() == '.wav' and f.is_file()
+        )
         
         # Filter out macOS metadata files (._*) and other hidden files
         wav_files = [f for f in all_wav_files if not f.name.startswith('._') and not f.name.startswith('.')]
