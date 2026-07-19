@@ -1,6 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from guano_gui import APP_VERSION
+import os
+import re
+
+# Read APP_VERSION out of guano_gui.py's source rather than importing the
+# module: PyInstaller execs this spec file without the project directory on
+# sys.path, so a real import fails with ModuleNotFoundError, and importing
+# guano_gui would also pull in guano/tkinter before the build has set up its
+# own dependency analysis.
+with open(os.path.join(SPECPATH, 'guano_gui.py'), encoding='utf-8') as _f:
+    _match = re.search(r'^APP_VERSION\s*=\s*["\'](.+?)["\']', _f.read(), re.MULTILINE)
+if not _match:
+    raise RuntimeError("Could not find APP_VERSION in guano_gui.py")
+APP_VERSION = _match.group(1)
 
 block_cipher = None
 
