@@ -20,6 +20,11 @@ from guano_metadata_manager import (
 )
 
 
+# Single source of truth for the app version, shown in the window title and
+# read by guano_editor.spec for the macOS bundle version - update only here.
+APP_VERSION = "1.3.0"
+
+
 _FONT_CACHE: Dict[tuple, tkfont.Font] = {}
 
 
@@ -83,7 +88,7 @@ class GuanoGUI:
     
     def __init__(self, root):
         self.root = root
-        self.root.title("GUANO Metadata Editor")
+        self.root.title(f"GUANO Metadata Editor v{APP_VERSION}")
         self.root.geometry("1000x850")
         
         # Initialize manager

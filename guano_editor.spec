@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from guano_gui import APP_VERSION
+
 block_cipher = None
 
 a = Analysis(
@@ -61,8 +63,8 @@ app = BUNDLE(
     bundle_identifier='org.batacoustics.guano-editor',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '1.1.0',
-        'CFBundleVersion': '1.1.0',
+        'CFBundleShortVersionString': APP_VERSION,
+        'CFBundleVersion': APP_VERSION,
         'NSHumanReadableCopyright': '2026 Bat Acoustic Research Community',
     },
 )

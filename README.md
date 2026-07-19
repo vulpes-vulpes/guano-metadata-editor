@@ -21,6 +21,7 @@ This utility aims to help. It lets you quickly read the GUANO from a set of file
 - **Edit common fields:** Edit or delete fields shared across all files
 - **Edit/standardize variable fields:** Replace varying field values with a single common value across all files
 - **Add new fields:** Add both standard GUANO fields and custom fields in a safe way compatible with the GUANO specification
+- **Check / Fix Timestamps:** Compare each file's GUANO Timestamp against a timestamp embedded in its filename, and correct mismatches with one click
 - **Pending changes queue:** Queue multiple edits and apply them all in a single pass!
 - **Monitor progress:** Integrated progress bar and file count tracking for all operations
 - **Efficient for large datasets:** Parallel processing for speed and optimized memory usage for datasets with 10,000+ files
@@ -84,6 +85,11 @@ The editor uses a **pending changes queue** system that allows you to batch mult
    - All changes are applied in a **single pass** through all files
    - Progress bar shows update status
 
+
+### Timestamp Verification (NEW in 1.3.0)
+- Click **Check / Fix Timestamps** to compare each file's GUANO `Timestamp` against a timestamp parsed from its filename (`YYYYMMDD_HHMMSS`)
+- Mismatches and files missing a Timestamp are pre-selected; review and adjust the selection, then click **Apply Selected**
+- This applies directly rather than through the pending changes queue, since each file gets its own corrected value
 
 ### Important Notes
 - ⚠️ **Always maintain your own backups** before batch editing operations

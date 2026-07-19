@@ -2,6 +2,24 @@
 
 All notable changes to the GUANO Metadata Editor will be documented in this file.
 
+## [1.3.0] - 2026-07-19
+
+### Added
+- **Check / Fix Timestamps tool**: Compares each file's GUANO `Timestamp` field against a timestamp embedded in its filename (`YYYYMMDD_HHMMSS`), flags mismatches and files missing a Timestamp, and lets you selectively correct them to match the filename
+  - Comparison ignores sub-second precision and UTC offset, since filenames encode neither
+  - Existing UTC offsets are preserved when a correction is applied
+  - Applies directly with its own confirmation step rather than through the pending changes queue, since each file needs its own distinct corrected value rather than one shared value
+- **Mouse wheel scrolling**: Edit Common Fields and Edit Variable Fields dialogs now scroll with the mouse wheel/trackpad, not just by dragging the scrollbar
+- **Version number in window title**: The main window title bar now shows the app version (e.g. "GUANO Metadata Editor v1.3.0"), making it easy to tell which build you're running
+
+### Fixed
+- **Windows: doubled file count and false variable-field reporting**: Loading a directory searched for `*.wav` and `*.WAV` separately; on Windows, where glob matching is case-insensitive, every file matched both patterns and was counted twice. This also broke common/variable field detection, since each field's values were compared against the inflated file count. Fixed by scanning the directory once and filtering extensions case-insensitively (mixed-case extensions like `.Wav`, previously missed on macOS/Linux, are now found there too)
+- **Windows: inconsistent fonts and a blank white area in scrollable dialogs**: Hardcoded fonts (Helvetica, Courier) rendered inconsistently against Windows' native Segoe UI; fonts now derive from the platform's actual default UI font. The scrollable areas in the edit dialogs also showed a bare white strip on Windows, since `tk.Canvas` isn't theme-aware; the canvas now matches the theme background and its content fills the available width
+
+### Developer
+- Added `CLAUDE.md` with architecture and workflow notes for AI-assisted development
+- App version is now defined once (`APP_VERSION` in `guano_gui.py`) and read by `guano_editor.spec` for the macOS bundle version, instead of two separately-maintained version strings that had drifted out of sync across the last two releases
+
 ## [1.2.0] - 2026-04-01
 
 ### Major Features

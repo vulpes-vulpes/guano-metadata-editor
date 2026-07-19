@@ -142,6 +142,8 @@ The variable fields are shown in a tree structure:
   - Check "Delete field" checkbox to remove variable fields from all files
   - Converts them to common fields or deletes them
 - **Add Field**: Opens a dialog to add new metadata fields (standard GUANO or custom) to all files
+- **Check / Fix Timestamps**: Opens a dialog comparing each file's GUANO `Timestamp` field to a timestamp parsed from its filename (`YYYYMMDD_HHMMSS`), and lets you correct mismatches
+  - Applies directly (not through the pending changes queue), since each file needs its own distinct corrected value
 
 ### Pending Changes Panel
 
@@ -249,6 +251,24 @@ Shows a running log of all operations:
 - Standardize inconsistent site names to a single value
 - Remove fields that were incorrectly set with different values
 - Update equipment information that varied due to a bug
+
+### Workflow 7: Fixing Timestamp Mismatches
+
+**Goal**: Correct a GUANO `Timestamp` field that doesn't match the time encoded in the filename
+
+Recording timestamps can end up wrong in the GUANO metadata while the filename (written once by the recording hardware) stays correct. This tool compares the two and lets you fix mismatches.
+
+1. Load files
+2. Click "Check / Fix Timestamps"
+3. Review the table showing, for each file, the filename-derived time, the current GUANO Timestamp, and a status:
+   - **✓ Match** - the two agree (to the second; sub-second precision and UTC offset are not compared, since filenames don't encode either)
+   - **⚠ Mismatch** - the two disagree; pre-selected for correction
+   - **⚠ Missing Timestamp field** - no Timestamp is set at all; pre-selected for correction
+   - **— No timestamp in filename** - the filename doesn't contain a recognizable timestamp; cannot be corrected
+4. Adjust the selection with the checkboxes, or use "Select All Mismatches" / "Deselect All"
+5. Click "Apply Selected" and confirm
+
+**Note**: Unlike the other editing dialogs, this applies its own corrections immediately rather than adding to the pending changes queue - each file needs its own distinct corrected value, which the queue (built for one shared value applied to every file) can't represent. Any existing UTC offset on a file's Timestamp is preserved when it's corrected.
 
 ## Safety Features
 
@@ -368,6 +388,12 @@ macOS metadata files are automatically excluded:
 **Cause**: No changes are queued
 
 **Solution**: Queue at least one change using Edit Common Fields, Edit Variable Fields, or Add Field. The button will become active when changes are pending.
+
+### Problem: "Check / Fix Timestamps" says "No timestamp in filename"
+
+**Cause**: The tool looks specifically for an 8-digit date and 6-digit time in the filename (`YYYYMMDD_HHMMSS`, e.g. `HNC_DG1-20220625_212022.wav`). If your recording hardware or software names files differently, no timestamp can be extracted and that file can't be corrected by this tool.
+
+**Solution**: This is expected for filenames that don't follow that pattern - there's nothing to fix for those files through this tool. Other files with a recognizable pattern will still be checked normally.
 
 ### Problem: Application won't launch  (for source installations)
 
